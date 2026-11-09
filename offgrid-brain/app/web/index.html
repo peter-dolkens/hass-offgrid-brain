@@ -170,8 +170,8 @@
     <div class="gauges">
       <div class="panel"><h3>Battery <span class="when" id="g-when-b"></span></h3><div id="g-batt"></div>
         <div class="legend"><span><i style="background:var(--batt)"></i>charge / charging</span><span><i style="background:var(--load)"></i>discharging</span><span><i style="background:var(--floor)"></i>floors</span></div></div>
-      <div class="panel"><h3>Load and solar <span class="when" id="g-when-l"></span></h3><div id="g-load"></div>
-        <div class="legend"><span><i style="background:var(--load)"></i>load</span><span><i style="background:var(--solar-av)"></i>solar available</span><span><i style="background:var(--surge)"></i>above continuous (darker = shorter)</span></div>
+      <div class="panel"><h3>Inverters <span class="when" id="g-when-l"></span></h3><div id="g-load"></div>
+        <div class="legend"><span><i style="background:var(--load)"></i>battery inverter supplying</span><span><i style="background:var(--batt)"></i>charging</span><span><i style="background:var(--surge)"></i>short-term (darker = shorter)</span><span><i style="background:var(--pv)"></i>solar delivered</span><span><i style="background:var(--solar-av)"></i>available</span></div>
         <div class="sub" id="g-arrays"></div></div>
       <div class="panel"><h3>Loads <span class="when" id="g-when-d"></span></h3><div id="g-loads"></div></div>
     </div>
@@ -436,42 +436,80 @@ function batteryGauge(m) {
 }
 
 const durText = (sec) => (sec >= 3600 && sec % 3600 === 0 ? `${sec / 3600} h` : sec >= 60 && sec % 60 === 0 ? `${sec / 60} min` : `${sec} s`);
-function loadGauge(m) {
-  const b = state.battery, START = -135, SPAN = 270;
-  // Continuous, then each short-term rating: higher kW for less time.
+/* One ring per inverter, each against its own limits. AC-coupled, so the solar
+   inverters and the battery inverter all feed the house's AC bus, and the battery
+   inverter only carries what the sun doesn't: load minus solar delivered. Its
+   ratings apply to that share, not to the whole load.
+     outer   battery inverter: supplying (load colour) or charging (battery colour),
+             0 to its top short-term rating, with the short-term bands and ticks
+     inner   each solar inverter: delivered over available, 0 to its AC rating
+   For a past or projected moment only the totals were recorded, so solar is split
+   across the inverters by AC rating. */
+function inverterRings(m) {
+  const b = state.battery, sol = state.solar || {};
+  const arrays = sol.arrays && sol.arrays.length ? sol.arrays : [];
+  const cap = (a) => (a.acKw > 0 ? a.acKw : a.kwp > 0 ? a.kwp : 10);
+  const capSum = arrays.reduce((t, a) => t + cap(a), 0) || 1;
+  const live = view == null;
+  const solar = arrays.map((a) => ({
+    name: a.name, max: cap(a),
+    kw: live ? n(a.kw) : (n(m.pvKw) * cap(a)) / capSum,
+    avail: live ? n(a.availableKw) : (n(Number.isFinite(m.availKw) ? m.availKw : m.pvKw) * cap(a)) / capSum,
+  }));
   const ratings = (b.ratings || []).filter((r) => r.kw > b.inverter_kw && r.seconds > 0).sort((a, z) => a.kw - z.kw);
-  const MAX = ratings.length ? ratings[ratings.length - 1].kw : b.inverter_kw * 1.5;
-  const ang = (v) => START + SPAN * Math.max(0, Math.min(1, v / MAX));
-  const avail = Number.isFinite(m.availKw) ? Math.max(m.availKw, n(m.pvKw) || 0) : n(m.pvKw);
-  const unused = avail - (n(m.pvKw) || 0);
-  const foot = !Number.isFinite(avail) ? "no solar reading" : avail < 0.05 ? "no sun" : unused > 0.3 ? `${kw(unused)} of sun unused` : "using all the sun";
-  // The band above continuous darkens as the time allowed gets shorter.
+  const battMax = ratings.length ? ratings[ratings.length - 1].kw : b.inverter_kw * 1.5;
+  const share = n(m.loadKw) - (n(m.pvKw) || 0);   // + supplying the house, - charging from the sun
+  return { solar, ratings, battMax, share };
+}
+
+function loadGauge(m) {
+  const b = state.battery, START = -135, SPAN = 270, CX = 100, CY = 95;
+  const { solar, ratings, battMax, share } = inverterRings(m);
+  const ang = (v, max) => START + SPAN * Math.max(0, Math.min(1, v / max));
+  const ring = (r, w, a0, a1, color, extra = "") => `<path d="${arcPath(CX, CY, r, a0, a1)}" stroke="${color}" stroke-width="${w}" fill="none"${extra}/>`;
+  const parts = [];
+  // outer: battery inverter
+  const RB = 82, WB = 10;
+  parts.push(ring(RB, WB, START, START + SPAN, "var(--track)", ' stroke-linecap="round"'));
   let lo = b.inverter_kw;
-  const bands = ratings.map((r, i) => { const d = `<path d="${arcPath(100, 95, 78, ang(lo), ang(r.kw))}" stroke="var(--surge)" stroke-width="14" fill="none" opacity="${(0.45 + (0.55 * (i + 1)) / ratings.length).toFixed(2)}"/>`; lo = r.kw; return d; }).join("");
-  const marks = [{ kw: b.inverter_kw, title: `${b.inverter_kw} kW continuous` }, ...ratings.map((r) => ({ kw: r.kw, title: `${r.kw} kW for ${durText(r.seconds)}` }))];
-  let lastLabel = -999;
-  const ticks = marks.map((mk, i) => {
-    const deg = ang(mk.kw), a = (deg * Math.PI) / 180, last = i === marks.length - 1;
-    const label = deg - lastLabel >= 12 || last;   // skip a label that would collide
-    if (label) lastLabel = deg;
-    return `<g><title>${mk.title}</title><line x1="${100 + 68 * Math.sin(a)}" y1="${95 - 68 * Math.cos(a)}" x2="${100 + 90 * Math.sin(a)}" y2="${95 - 90 * Math.cos(a)}" stroke="var(--floor)" stroke-width="1.5"/>`
-      + (label ? txt(100 + 102 * Math.sin(a), 95 - 102 * Math.cos(a) + 4, `${+mk.kw.toFixed(2)}${last ? " kW" : ""}`, { size: 9, fill: "var(--muted)", mono: true }) : "") + "</g>";
-  }).join("");
-  let warn = "";
-  if (m.loadKw > b.inverter_kw) {
-    const fits = ratings.find((r) => r.kw >= m.loadKw);
-    warn = fits ? `above continuous: allowed for ${durText(fits.seconds)}` : `over the ${MAX} kW limit`;
+  ratings.forEach((r, i) => { parts.push(ring(RB, WB, ang(lo, battMax), ang(r.kw, battMax), "var(--surge)", ` opacity="${(0.45 + (0.55 * (i + 1)) / ratings.length).toFixed(2)}"`)); lo = r.kw; });
+  if (Number.isFinite(share) && Math.abs(share) > 0.005) {
+    parts.push(ring(RB, WB - 4, START, Math.max(START + 1.5, ang(Math.abs(share), battMax)), share > 0 ? "var(--load)" : "var(--batt)", ' stroke-linecap="round"'));
   }
-  return `<svg viewBox="0 0 200 190" role="img" aria-label="Load ${kw(m.loadKw)}, solar ${kw(m.pvKw)} of ${kw(avail)}">
-    <path d="${arcPath(100, 95, 78, START, START + SPAN)}" stroke="var(--track)" stroke-width="14" fill="none" stroke-linecap="round"/>
-    ${bands}
-    ${avail > 0.01 ? `<path d="${arcPath(100, 95, 78, START, ang(Math.min(avail, MAX)))}" stroke="var(--solar-av)" stroke-width="14" fill="none" stroke-linecap="round"/>` : ""}
-    ${Number.isFinite(m.loadKw) ? `<path d="${arcPath(100, 95, 78, START, Math.max(START + 1.5, ang(m.loadKw)))}" stroke="var(--load)" stroke-width="6" fill="none" stroke-linecap="round"/>` : ""}
-    ${ticks}
-    ${txt(100, 92, kw(m.loadKw), { size: 26, w: 700 })}
-    ${txt(100, 112, `solar ${kw(m.pvKw)} of ${kw(avail)}`, { size: 11.5, fill: "var(--muted)" })}
-    ${txt(100, 168, foot, { size: 11.5, w: 600 })}
-    ${warn ? txt(100, 184, warn, { size: 10.5, fill: "var(--bad)", w: 600 }) : ""}
+  let lastLabel = -999;
+  [{ kw: b.inverter_kw, title: `${b.inverter_kw} kW continuous` }, ...ratings.map((r) => ({ kw: r.kw, title: `${r.kw} kW for ${durText(r.seconds)}` }))].forEach((mk, i, all) => {
+    const deg = ang(mk.kw, battMax), a = (deg * Math.PI) / 180, last = i === all.length - 1;
+    const label = deg - lastLabel >= 12 || last;
+    if (label) lastLabel = deg;
+    parts.push(`<g><title>Battery inverter: ${mk.title}</title><line x1="${CX + (RB - 7) * Math.sin(a)}" y1="${CY - (RB - 7) * Math.cos(a)}" x2="${CX + (RB + 8) * Math.sin(a)}" y2="${CY - (RB + 8) * Math.cos(a)}" stroke="var(--floor)" stroke-width="1.5"/>`
+      + (label ? txt(CX + (RB + 16) * Math.sin(a), CY - (RB + 16) * Math.cos(a) + 3, `${+mk.kw.toFixed(2)}${last ? " kW" : ""}`, { size: 8.5, fill: "var(--muted)", mono: true }) : "") + "</g>");
+  });
+  // inner: one ring per solar inverter
+  solar.forEach((s, i) => {
+    const r = 67 - i * 13, w = 9;
+    parts.push(`<g><title>${esc(s.name)}: ${kw(s.kw)} of ${kw(s.avail)} available, ${s.max} kW AC</title>`
+      + ring(r, w, START, START + SPAN, "var(--track)", ' stroke-linecap="round"')
+      + (s.avail > 0.01 ? ring(r, w, START, ang(s.avail, s.max), "var(--solar-av)", ' stroke-linecap="round"') : "")
+      + (s.kw > 0.01 ? ring(r, w, START, ang(s.kw, s.max), "var(--pv)", ' stroke-linecap="round"') : "") + "</g>");
+  });
+  // ring names at their start
+  const tag = (r, l) => { const a = ((START - 9) * Math.PI) / 180; return txt(CX + r * Math.sin(a), CY - r * Math.cos(a) + 3, l, { size: 8, fill: "var(--muted)", w: 650, a: "end" }); };
+  parts.push(tag(RB, "bat"));
+  solar.forEach((s, i) => parts.push(tag(67 - i * 13, esc(String(s.name).replace(/^solar inverter\s*/i, "").replace(/[()]/g, "").slice(0, 1).toUpperCase() || i + 1))));
+  const sunAvail = solar.reduce((t, s) => t + (n(s.avail) || 0), 0), sunUsed = solar.reduce((t, s) => t + (n(s.kw) || 0), 0);
+  const foot = !solar.length ? "" : sunAvail < 0.05 ? "no sun" : sunAvail - sunUsed > 0.3 ? `${kw(sunAvail - sunUsed)} of sun unused` : "using all the sun";
+  let warn = "";
+  if (share > b.inverter_kw) {
+    const fits = ratings.find((r) => r.kw >= share);
+    warn = fits ? `battery inverter at ${kw(share)}: allowed for ${durText(fits.seconds)}` : `battery inverter over its ${battMax} kW limit`;
+  }
+  const batLine = !Number.isFinite(share) ? "" : share > 0.005 ? `battery supplies ${kw(share)}` : share < -0.005 ? `sun charges ${kw(-share)}` : "battery idle";
+  return `<svg viewBox="0 0 200 206" role="img" aria-label="Load ${kw(m.loadKw)}; ${esc(batLine)}">
+    ${parts.join("")}
+    ${txt(CX, CY + 2, kw(m.loadKw), { size: 20, w: 700 })}
+    ${txt(CX, CY + 16, "load", { size: 10, fill: "var(--muted)" })}
+    ${txt(CX, 186, batLine + (foot ? ` · ${foot}` : ""), { size: 10.5, w: 600 })}
+    ${warn ? txt(CX, 201, warn, { size: 10, fill: "var(--bad)", w: 600 }) : ""}
   </svg>`;
 }
 

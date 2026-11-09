@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.16.1
+- Live: the load gauge is now **Inverters**, with one ring per inverter.
+  - The outer ring is the battery inverter: what it supplies (load minus solar)
+    or the surplus it charges from, against its continuous and short-term ratings.
+    AC-coupled, those limits apply to the battery inverter's share, not the whole
+    load, so in sunlight the house can draw the sun plus 7.5 kW.
+  - Each solar inverter gets its own ring: delivered and available against its AC
+    rating.
+
 ## 0.16.0
 - Battery settings: the fixed **Surge** and **Peak** fields are replaced by a list
   of **short-term ratings** (kW for a duration), so an inverter with several, like

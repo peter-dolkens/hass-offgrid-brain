@@ -283,6 +283,8 @@ async function main() {
       irradiance: irrEnt, deliveredKw: pvDelivered, availableKw: pvAvailable,
       headroomKw: Number.isFinite(pvAvailable) && Number.isFinite(pvDelivered) ? Math.max(0, pvAvailable - pvDelivered) : NaN,
       curtailed: perArray.some((a) => a.curtailed), unconstrained,
+      // What the solar inverters can put on the AC bus together (AC rating, else kWp).
+      acTotalKw: arrays.reduce((t, a) => t + (a.acKw > 0 ? a.acKw : a.kwp > 0 ? a.kwp : 0), 0),
       charger: batt.charger,
       arrays: perArray.map((a, n) => ({ ...a, name: arrays[n].name, source: arrays[n].source })),
       // Live reading per configured inverter, and what the bridge reports, for the Settings tiles.

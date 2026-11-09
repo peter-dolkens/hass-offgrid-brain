@@ -37,9 +37,16 @@ The add-on adds **Off-Grid Brain** to the Home Assistant sidebar (Ingress, admin
   Under it are three panels for the moment being viewed:
   - **Battery:** a ring with each charge rung's floor and the reserve, the
     charge/discharge rate as an inner arc, and when it reaches full or the next floor.
-  - **Load and solar:** the load against solar available and the battery inverter's
-    continuous and short-term ratings. The band above continuous darkens as the
-    time allowed gets shorter, and a load above continuous says how long it may run.
+  - **Inverters:** one ring per inverter, around the total load. The house is
+    AC-coupled: the solar inverters and the battery inverter all feed its AC bus,
+    so the battery inverter only carries load minus solar, and its ratings apply to
+    that share, not the whole load.
+    - The outer ring is the battery inverter, either supplying the house or
+      charging from surplus sun, on its own scale. Its short-term bands darken as
+      the time allowed gets shorter, and above continuous it says how long it may
+      run.
+    - Each inner ring is a solar inverter: delivered over available, against its
+      AC rating.
   - **Loads:** which are running and which are shed.
 
   Below them is the dispatch list exactly as the last tick walked it: each entry's
