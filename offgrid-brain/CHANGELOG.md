@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.0
+- Live: replay at **60×, 600× or 900×** (1, 10 or 15 minutes of history a
+  second). The panel remembers the choice in your browser.
+- Scroll past the timeline and a compact copy, about a quarter of its height, pins
+  under the header as a scrubber. It has the same play, speed and Back to now
+  controls, and you can click or drag it to pick a moment.
+
 ## 0.17.0
 - Live: the Inverters gauge is now a **split dial**. Zero is at 12 o'clock. The
   solar inverters fill anticlockwise to their combined AC rating, one shade each,

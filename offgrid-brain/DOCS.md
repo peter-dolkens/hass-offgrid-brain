@@ -33,7 +33,9 @@ The add-on adds **Off-Grid Brain** to the Home Assistant sidebar (Ingress, admin
   inverter's own draw. That draw is learned from the recording as battery discharge
   minus AC load with no sun, about 40 W on an SP PRO. Hours where the battery would
   sit at the reserve are tinted. Click or drag the timeline to look at any
-  moment, or press **Replay** to play the last day at 60× until it catches up to now.
+  moment, or press **Replay** to play the last day at 60×, 600× or 900× until it
+  catches up to now. Scroll down and the timeline follows as a compact scrubber
+  pinned under the header, with the same controls.
   Under it are three panels for the moment being viewed:
   - **Battery:** a ring with each charge rung's floor and the reserve, the
     charge/discharge rate as an inner arc, and when it reaches full or the next floor.

@@ -46,6 +46,18 @@
   .tl-bar { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; padding: 10px 14px 0; }
   .tl-time { font: 600 15px var(--mono); font-variant-numeric: tabular-nums; }
   .tl-chart { padding: 6px 8px 0; touch-action: none; cursor: crosshair; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+  .seg button { font: inherit; font-size: 12px; font-weight: 600; border: 0; background: var(--card); color: var(--muted); padding: 6px 9px; cursor: pointer; font-variant-numeric: tabular-nums; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .seg button:focus-visible, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tl-mini { position: fixed; left: 0; right: 0; top: var(--hdr-h, 56px); z-index: 2; background: var(--card); border-bottom: 1px solid var(--line);
+             box-shadow: 0 6px 16px rgba(0, 0, 0, .08); }
+  .tl-mini-in { max-width: 1100px; margin: 0 auto; padding: 0 16px 6px; }
+  .tl-mini .tl-bar { padding: 6px 0 0; }
+  .tl-mini .btn { padding: 4px 10px; }
+  .tl-mini .tl-chart { padding: 2px 0 0; }
+  @media (prefers-reduced-motion: no-preference) { .tl-mini:not([hidden]) { animation: tl-drop .18s ease-out; } }
+  @keyframes tl-drop { from { transform: translateY(-12px); opacity: 0; } to { transform: none; opacity: 1; } }
   .tl-chart svg, .gauges svg { display: block; width: 100%; height: auto; overflow: visible; }
   .gauges svg { max-width: 260px; margin: 0 auto; }
   .tl-foot { display: flex; gap: 6px 14px; flex-wrap: wrap; padding: 6px 14px 12px; font-size: 12px; color: var(--muted); }
@@ -148,15 +160,29 @@
   <nav><button data-tab="live" class="on">Live</button><button data-tab="policy">Policy</button><button data-tab="settings">Settings</button></nav>
 </header>
 
+<!-- The timeline, compact, pinned under the header once the full one scrolls away. -->
+<div class="tl-mini" id="tl-mini" hidden>
+  <div class="tl-mini-in">
+    <div class="tl-bar">
+      <button class="btn js-play" aria-label="Replay the recorded day">▶ Replay</button>
+      <span class="seg js-speed" role="group" aria-label="Replay speed"><button data-speed="60">60×</button><button data-speed="600">600×</button><button data-speed="900">900×</button></span>
+      <button class="btn js-now" hidden>Back to now</button>
+      <span class="tl-time js-time">now</span>
+    </div>
+    <div class="tl-chart" id="tl-mini-chart"></div>
+  </div>
+</div>
+
 <main>
   <section id="tab-live">
     <div id="banners"></div>
     <div class="card">
       <h2>Timeline <span class="muted">The last 24 h as the brain recorded it, and the next 24 h projected from the solar forecast and the last day's load. Click or drag to look at any moment.</span></h2>
       <div class="tl-bar">
-        <button class="btn" id="tl-play" aria-label="Replay the last 24 hours">▶ Replay</button>
-        <button class="btn" id="tl-now" hidden>Back to now</button>
-        <span class="tl-time" id="tl-time">now</span>
+        <button class="btn js-play" aria-label="Replay the recorded day">▶ Replay</button>
+        <span class="seg js-speed" role="group" aria-label="Replay speed"><button data-speed="60">60×</button><button data-speed="600">600×</button><button data-speed="900">900×</button></span>
+        <button class="btn js-now" hidden>Back to now</button>
+        <span class="tl-time js-time">now</span>
         <span class="muted" id="tl-note"></span>
       </div>
       <div class="tl-chart" id="tl-chart"><div class="empty">Loading…</div></div>
@@ -352,7 +378,9 @@ function renderLive() {
 // `view` is the moment the gauges show: null is now (live, refreshed every tick);
 // a time is a moment picked on the timeline or reached by the replay.
 const HOUR_MS = 3600 * 1000;
-const SPEED = 60;                       // replay: one minute of history per second
+const SPEEDS = [60, 600, 900];          // replay: 1, 10 or 15 minutes of history per second
+let speed = 60;
+try { const v = Number(localStorage.getItem("brain.replaySpeed")); if (SPEEDS.includes(v)) speed = v; } catch {}
 let tl = null;                          // last /api/timeline
 let view = null;
 let playing = false;
@@ -550,13 +578,16 @@ function renderGauges() {
   const arrays = (state.solar && state.solar.arrays) || [];
   $("g-arrays").innerHTML = view != null ? (m.projected ? "Solar from the forecast; load repeats the last day's." : "")
     : arrays.filter((a) => a.availableKw > 0.05).map((a) => `${esc(a.name)} ${kw(a.kw)} of ${kw(a.availableKw)}${a.curtailed ? " (throttled)" : ""}`).join(" · ");
-  $("tl-time").textContent = view == null ? "now" : dayClock(view);
-  $("tl-now").hidden = view == null;
-  $("tl-play").textContent = playing ? "❚❚ Pause" : view == null ? "▶ Replay" : "▶ Play";
+  for (const el of document.querySelectorAll(".js-time")) el.textContent = view == null ? "now" : dayClock(view);
+  for (const el of document.querySelectorAll(".js-now")) el.hidden = view == null;
+  for (const el of document.querySelectorAll(".js-play")) el.textContent = playing ? "❚❚ Pause" : view == null ? "▶ Replay" : "▶ Play";
 }
 
 // ----- the timeline chart -----
-let geo = null;   // scales of the chart last drawn, for the playhead and pointer
+/* Two copies of the chart: the full one in its card, and a compact one (about a
+   quarter of the height) pinned under the header once the full one scrolls away.
+   Each keeps the scales it was last drawn with, for its playhead and pointer. */
+const CHARTS = [{ id: "tl-chart", compact: false, geo: null }, { id: "tl-mini-chart", compact: true, geo: null }];
 function segments(list, key, maxGap) {
   const out = []; let cur = [];
   for (const p of list) {
@@ -568,69 +599,75 @@ function segments(list, key, maxGap) {
   return out;
 }
 function drawTimeline() {
-  const el = $("tl-chart");
+  for (const c of CHARTS) if (!c.compact || !$("tl-mini").hidden) drawChart(c);
+}
+function drawChart(c) {
+  const el = $(c.id), cp = c.compact;
   if (!tl || !state || state.starting) return;
-  const W = Math.max(300, el.clientWidth - 16), H = W < 560 ? 220 : 250;
-  const M = { l: 38, r: 10, t: 10 };
-  const socTop = M.t, socBot = H * 0.42, kwTop = socBot + 28, kwBot = H - 34, shedY = H - 28, axisY = H - 6;
+  const W = Math.max(300, el.clientWidth - (cp ? 0 : 16)), H = cp ? 64 : W < 560 ? 220 : 250;
+  const M = cp ? { l: 4, r: 4, t: 3 } : { l: 38, r: 10, t: 10 };
+  const socTop = M.t, socBot = cp ? 27 : H * 0.42, kwTop = cp ? 31 : socBot + 28, kwBot = cp ? 50 : H - 34,
+    shedY = cp ? 52 : H - 28, axisY = cp ? H - 1 : H - 6, shedH = cp ? 3 : 6;
   const x = (t) => M.l + ((t - tl.from) / (tl.to - tl.from)) * (W - M.l - M.r);
   const ys = (v) => socTop + (1 - v / 100) * (socBot - socTop);
   const b = state.battery;
   const all = [...tl.past, ...tl.future];
   const kwMax = niceMax(Math.max(1, ...all.map((p) => Math.max(n(p.loadKw) || 0, n(p.availKw) || 0, n(p.pvKw) || 0))));
   const yk = (v) => kwBot - (Math.min(v, kwMax) / kwMax) * (kwBot - kwTop);
-  geo = { x, ys, W, H, socTop, kwBot, from: tl.from, to: tl.to, M };
+  c.geo = { x, ys, W, H, socTop, kwBot, from: tl.from, to: tl.to, M };
   const line = (segs, y) => segs.map((s) => `M${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}`).join("");
   const area = (segs, y) => segs.map((s) => `M${x(s[0][0]).toFixed(1)},${kwBot}L${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}L${x(s[s.length - 1][0]).toFixed(1)},${kwBot}Z`).join("");
   const parts = [];
-  // grid
-  for (const v of [0, 50, 100]) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${ys(v)}" y2="${ys(v)}" stroke="var(--line)"/>${txt(M.l - 5, ys(v) + 3, `${v}%`, { a: "end", size: 10, fill: "var(--muted)", mono: true })}`);
-  for (const v of [0, kwMax / 2, kwMax]) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${yk(v)}" y2="${yk(v)}" stroke="var(--line)"/>${txt(M.l - 5, yk(v) + 3, `${+v.toFixed(1)}`, { a: "end", size: 10, fill: "var(--muted)", mono: true })}`);
-  parts.push(txt(M.l + 4, kwTop - 4, "kW", { a: "start", size: 10, fill: "var(--muted)", mono: true }));
+  // grid (the compact chart keeps only the floors and the hours)
+  if (!cp) for (const v of [0, 50, 100]) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${ys(v)}" y2="${ys(v)}" stroke="var(--line)"/>${txt(M.l - 5, ys(v) + 3, `${v}%`, { a: "end", size: 10, fill: "var(--muted)", mono: true })}`);
+  if (!cp) for (const v of [0, kwMax / 2, kwMax]) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${yk(v)}" y2="${yk(v)}" stroke="var(--line)"/>${txt(M.l - 5, yk(v) + 3, `${+v.toFixed(1)}`, { a: "end", size: 10, fill: "var(--muted)", mono: true })}`);
+  if (!cp) parts.push(txt(M.l + 4, kwTop - 4, "kW", { a: "start", size: 10, fill: "var(--muted)", mono: true }));
   for (const f of floorsOf()) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${ys(f)}" y2="${ys(f)}" stroke="${f === b.reserve_pct ? "var(--reserve)" : "var(--floor)"}" stroke-dasharray="3 4" stroke-width="1"/>`);
   // hours
   for (let t = Math.ceil(tl.from / HOUR_MS) * HOUR_MS; t <= tl.to; t += HOUR_MS) {
     const h = new Date(t).getHours();
     if (h % (W < 560 ? 12 : 6)) continue;
-    parts.push(`<line x1="${x(t)}" x2="${x(t)}" y1="${socTop}" y2="${shedY + 6}" stroke="var(--line)" stroke-width="${h ? 1 : 1.5}"/>`
-      + txt(x(t), axisY, h ? clock(t) : new Date(t).toLocaleDateString([], { weekday: "short" }), { size: 10, fill: "var(--muted)", mono: !!h, w: h ? 400 : 650 }));
+    parts.push(`<line x1="${x(t)}" x2="${x(t)}" y1="${socTop}" y2="${shedY + shedH}" stroke="var(--line)" stroke-width="${h ? 1 : 1.5}"/>`
+      + (cp ? "" : txt(x(t), axisY, h ? clock(t) : new Date(t).toLocaleDateString([], { weekday: "short" }), { size: 10, fill: "var(--muted)", mono: !!h, w: h ? 400 : 650 })));
   }
   // series: past solid, projection dashed / faded
   const draw = (list, gap, proj) => {
     const op = proj ? ' opacity=".55"' : "", dash = proj ? ' stroke-dasharray="5 4"' : "";
     parts.push(`<path d="${area(segments(list, "availKw", gap), yk)}" fill="var(--solar-av)"${op}/>`);
     parts.push(`<path d="${area(segments(list, "pvKw", gap), yk)}" fill="var(--pv)"${proj ? ' opacity=".45"' : ' opacity=".85"'}/>`);
-    parts.push(`<path d="${line(segments(list, "loadKw", gap), yk)}" fill="none" stroke="var(--load)" stroke-width="2" stroke-linejoin="round"${dash}/>`);
-    parts.push(`<path d="${line(segments(list, "soc", gap), ys)}" fill="none" stroke="var(--batt)" stroke-width="2.5" stroke-linejoin="round"${dash}/>`);
+    parts.push(`<path d="${line(segments(list, "loadKw", gap), yk)}" fill="none" stroke="var(--load)" stroke-width="${cp ? 1.5 : 2}" stroke-linejoin="round"${dash}/>`);
+    parts.push(`<path d="${line(segments(list, "soc", gap), ys)}" fill="none" stroke="var(--batt)" stroke-width="${cp ? 2 : 2.5}" stroke-linejoin="round"${dash}/>`);
     for (let k = 0; k < list.length; k++) {
       const p = list[k];
       if (!p.shed || !p.shed.length) continue;
       const t1 = k + 1 < list.length ? Math.min(list[k + 1].t, p.t + gap) : p.t + gap / 2;
-      parts.push(`<rect x="${x(p.t)}" y="${shedY}" width="${Math.max(1, x(t1) - x(p.t))}" height="6" fill="var(--bad)"${op}/>`);
+      parts.push(`<rect x="${x(p.t)}" y="${shedY}" width="${Math.max(1, x(t1) - x(p.t))}" height="${shedH}" fill="var(--bad)"${op}/>`);
       if (p.deficit) parts.push(`<rect x="${x(p.t)}" y="${socTop}" width="${Math.max(1, x(t1) - x(p.t))}" height="${socBot - socTop}" fill="var(--bad)" opacity=".08"/>`);
     }
   };
   draw(tl.past, 3 * 60 * 1000, false);
   draw(tl.future, 31 * 60 * 1000, true);
-  parts.push(`<line x1="${x(tl.now)}" x2="${x(tl.now)}" y1="${socTop - 4}" y2="${shedY + 6}" stroke="var(--text)" stroke-width="1.5" stroke-dasharray="2 3"/>`);
+  parts.push(`<line x1="${x(tl.now)}" x2="${x(tl.now)}" y1="${socTop - (cp ? 2 : 4)}" y2="${shedY + shedH}" stroke="var(--text)" stroke-width="1.5" stroke-dasharray="2 3"/>`);
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Battery, solar and load over the last and next 24 hours">
-    ${parts.join("")}<g id="tl-ph"></g><rect id="tl-hit" x="${M.l}" y="0" width="${W - M.l - M.r}" height="${H}" fill="transparent"/></svg>`;
+    ${parts.join("")}<g class="tl-ph"></g><rect x="${M.l}" y="0" width="${W - M.l - M.r}" height="${H}" fill="transparent"/></svg>`;
   drawPlayhead();
 }
 function drawPlayhead() {
-  const g = $("tl-ph");
-  if (!g || !geo) return;
-  const t = view == null ? tl.now : view;
+  const t = view == null ? (tl ? tl.now : 0) : view;
   const m = momentAt(view);
-  const X = geo.x(Math.max(geo.from, Math.min(geo.to, t)));
-  g.innerHTML = `<line x1="${X}" x2="${X}" y1="${geo.socTop - 6}" y2="${geo.kwBot + 10}" stroke="var(--accent)" stroke-width="2"/>
-    ${m && Number.isFinite(m.soc) ? `<circle cx="${X}" cy="${geo.ys(m.soc)}" r="5" fill="var(--batt)" stroke="var(--card)" stroke-width="2"/>` : ""}`;
+  for (const c of CHARTS) {
+    const g = $(c.id).querySelector(".tl-ph"), geo = c.geo;
+    if (!g || !geo) continue;
+    const X = geo.x(Math.max(geo.from, Math.min(geo.to, t)));
+    g.innerHTML = `<line x1="${X}" x2="${X}" y1="${geo.socTop - (c.compact ? 2 : 6)}" y2="${geo.kwBot + (c.compact ? 4 : 10)}" stroke="var(--accent)" stroke-width="2"/>
+      ${m && Number.isFinite(m.soc) ? `<circle cx="${X}" cy="${geo.ys(m.soc)}" r="${c.compact ? 3.5 : 5}" fill="var(--batt)" stroke="var(--card)" stroke-width="2"/>` : ""}`;
+  }
 }
 
 // pointer: hover shows a tooltip, press/drag picks the moment the gauges show
 let tip = null, dragging = false;
-function timeAtPointer(ev) {
-  const svg = $("tl-chart").querySelector("svg");
+function timeAtPointer(ev, c) {
+  const svg = $(c.id).querySelector("svg"), geo = c.geo;
   if (!svg || !geo) return null;
   const r = svg.getBoundingClientRect();
   const px = ((ev.clientX - r.left) / r.width) * geo.W;
@@ -653,38 +690,63 @@ function pick(t) {
   view = Math.abs(t - tl.now) < 2 * 60 * 1000 ? null : t;
   renderGauges(); drawPlayhead();
 }
-$("tl-chart").addEventListener("pointerdown", (ev) => { if (!tl) return; dragging = true; $("tl-chart").setPointerCapture(ev.pointerId); pick(timeAtPointer(ev)); });
-$("tl-chart").addEventListener("pointermove", (ev) => {
-  if (!tl) return;
-  const t = timeAtPointer(ev);
-  if (t == null || t < tl.from || t > tl.to) { if (tip) tip.hidden = true; return; }
-  if (dragging) pick(t);
-  showTip(ev, t);
-});
-$("tl-chart").addEventListener("pointerup", () => { dragging = false; });
-$("tl-chart").addEventListener("pointerleave", () => { if (tip) tip.hidden = true; });
+for (const c of CHARTS) {
+  const el = $(c.id);
+  el.addEventListener("pointerdown", (ev) => { if (!tl) return; dragging = true; el.setPointerCapture(ev.pointerId); pick(timeAtPointer(ev, c)); });
+  el.addEventListener("pointermove", (ev) => {
+    if (!tl) return;
+    const t = timeAtPointer(ev, c);
+    if (t == null || t < tl.from || t > tl.to) { if (tip) tip.hidden = true; return; }
+    if (dragging) pick(t);
+    showTip(ev, t);
+  });
+  el.addEventListener("pointerup", () => { dragging = false; });
+  el.addEventListener("pointerleave", () => { if (tip) tip.hidden = true; });
+}
 
-// replay: from the start of the record (or where it's paused) at 60x until it reaches now
+// replay: from the start of the record (or where it's paused) at the chosen speed until it reaches now
 let lastFrame = 0;
 function frame(ts) {
   if (!playing) return;
   const dt = lastFrame ? ts - lastFrame : 0;
   lastFrame = ts;
-  view += dt * SPEED;
+  view += dt * speed;
   if (view >= Date.now()) { view = null; playing = false; }
   renderGauges(); drawPlayhead();
   if (playing) requestAnimationFrame(frame);
 }
-$("tl-play").addEventListener("click", () => {
+function togglePlay() {
   if (!tl) return;
   if (playing) { playing = false; renderGauges(); return; }
   if (view == null || view >= tl.now) view = tl.past.length ? tl.past[0].t : tl.from;
   playing = true; lastFrame = 0;
+  renderGauges();
   requestAnimationFrame(frame);
+}
+function showSpeed() { for (const b of document.querySelectorAll(".js-speed button")) b.classList.toggle("on", Number(b.dataset.speed) === speed); }
+for (const el of document.querySelectorAll(".js-play")) el.addEventListener("click", togglePlay);
+for (const el of document.querySelectorAll(".js-speed")) el.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-speed]");
+  if (!b) return;
+  speed = Number(b.dataset.speed);
+  try { localStorage.setItem("brain.replaySpeed", String(speed)); } catch {}
+  showSpeed();
 });
+showSpeed();
 $("idle-toggle").addEventListener("click", () => { showIdle = !showIdle; renderLive(); });
 $("served-toggle").addEventListener("click", () => { showServed = !showServed; renderLive(); });
-$("tl-now").addEventListener("click", () => { playing = false; view = null; renderGauges(); drawPlayhead(); });
+for (const el of document.querySelectorAll(".js-now")) el.addEventListener("click", () => { playing = false; view = null; renderGauges(); drawPlayhead(); });
+
+// The compact timeline appears once the full one has scrolled up under the header.
+function placeMini() {
+  const hdr = document.querySelector("body > header").offsetHeight;
+  document.documentElement.style.setProperty("--hdr-h", `${hdr}px`);
+  const show = !$("tab-live").hidden && !!tl && $("tl-chart").getBoundingClientRect().bottom < hdr;
+  if (show === !$("tl-mini").hidden) return;
+  $("tl-mini").hidden = !show;
+  if (show) { drawChart(CHARTS[1]); drawPlayhead(); }
+}
+window.addEventListener("scroll", placeMini, { passive: true });
 
 async function refreshTimeline() {
   try {
@@ -700,7 +762,7 @@ async function refreshTimeline() {
   } catch (e) { $("tl-note").textContent = `timeline unavailable: ${e.message}`; }
 }
 let resizeT = null;
-window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(drawTimeline, 120); });
+window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => { drawTimeline(); placeMini(); }, 120); });
 
 /* An age that keeps counting: the element records WHEN the reading was taken
    (the tick time minus its age at that tick), and showAge() re-renders it. */
@@ -1151,6 +1213,7 @@ for (const b of document.querySelectorAll("nav button")) {
     if (b.dataset.tab === "policy" && !$("editor").value) loadPolicy();
     if (b.dataset.tab === "settings") loadSettingsTab();
     if (b.dataset.tab === "live") drawTimeline();   // it can't measure its width while hidden
+    placeMini();
   };
 }
 

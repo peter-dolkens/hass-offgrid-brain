@@ -1,6 +1,6 @@
 {
   "name": "offgrid-brain",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "private": true,
   "description": "Load-shedding dispatch brain for an off-grid house (Home Assistant add-on)",
   "main": "main.js",
