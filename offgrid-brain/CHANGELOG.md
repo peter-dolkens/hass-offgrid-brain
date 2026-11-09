@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.15.0
+- New Live page. A timeline at the top shows the last 24 h, recorded by the brain
+  itself (one sample a minute, kept across restarts), and the next 24 h, projected
+  from the solar forecast, the last day's load and the dispatch list. Click or drag
+  it to see any moment; **Replay** plays the last day at 60× until it reaches now.
+- Under it, three panels for the moment being viewed: a battery ring with the floors
+  and the charge/discharge rate, a load gauge against solar available and the
+  inverter's continuous/surge/peak ratings, and the loads running and shed. They
+  replace the tiles, the battery bar and the solar arrays card.
+- Battery settings gain optional **Surge** and **Peak** kW ratings for the load gauge.
+- New `GET /api/timeline`. Series colours follow the validated palette (solar
+  blue, battery green, load orange).
+
 ## 0.14.0
 - Solar forecast: the brain reads the hourly forecasts attached to solar in
   Home Assistant's Energy dashboard (Forecast.Solar, Solcast, ...), summed across

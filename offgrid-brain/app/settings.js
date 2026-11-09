@@ -23,6 +23,9 @@ const DEFAULTS = Object.freeze({
     name: "Battery", source: "none",
     soc_entity: "", power_entity: "", load_entity: "", energy_in_entity: "", energy_out_entity: "",
     capacity_kwh: 51.8, inverter_kw: 7.5, max_charge_kw: 7.5, reserve_pct: 10,
+    // Short-term ratings above the continuous one, shown on the Live load gauge.
+    surge_kw: null,   // ~30 minutes
+    peak_kw: null,    // ~60 seconds
   },
   autonomy: { seed_load_kwh: 30, window_days: 7 },
   // Readings that don't belong to the battery or an inverter.
@@ -126,6 +129,8 @@ function check(s) {
   if (!num(b.capacity_kwh, 0.1, 10000)) p.push("battery capacity must be a positive kWh");
   if (!num(b.inverter_kw, 0.1, 1000)) p.push("battery inverter kW must be positive");
   if (!num(b.max_charge_kw, 0.1, 1000)) p.push("max charge kW must be positive");
+  if (b.surge_kw != null && !num(b.surge_kw, b.inverter_kw, 1000)) p.push("surge kW must be at least the continuous rating");
+  if (b.peak_kw != null && !num(b.peak_kw, b.surge_kw != null ? b.surge_kw : b.inverter_kw, 1000)) p.push("peak kW must be at least the surge rating");
   if (!num(b.reserve_pct, 0, 50)) p.push("reserve must be 0-50%");
   const a = s.autonomy || {};
   if (!num(a.seed_load_kwh, 0, 10000)) p.push("autonomy seed load must be >= 0 kWh");

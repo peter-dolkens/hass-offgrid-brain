@@ -8,6 +8,7 @@
    Routes (all relative, so they work under the ingress path prefix):
      GET  /                   the UI
      GET  /api/state          last tick: inputs, context, decisions, per-entry trace
+     GET  /api/timeline       the last 24 h as recorded, the next 24 h as projected
      GET  /api/policy         the policy in force
      POST /api/policy/check   validate a candidate and preview it against the last tick
      PUT  /api/policy         validate, save to policy.json, and apply immediately
@@ -67,6 +68,7 @@ function savePolicy(file, policy) {
  * @param {object} o
  * @param {number} o.port
  * @param {() => object} o.getState      snapshot of the last tick
+ * @param {() => object} o.getTimeline   recorded past and projected future, for the Live timeline
  * @param {() => object} o.getPolicy     policy in force
  * @param {(p: object) => string[]} o.check       problems; empty = usable
  * @param {(p: object) => object} o.preview       dispatch result for p against the last tick
@@ -89,6 +91,8 @@ function startServer(o) {
         case "GET /":
         case "GET /index.html":
           return send(res, 200, fs.readFileSync(INDEX, "utf8"), "text/html");
+        case "GET /api/timeline":
+          return send(res, 200, o.getTimeline ? o.getTimeline() : { past: [], future: [] });
         case "GET /api/state":
           return send(res, 200, o.getState());
         case "GET /api/policy":

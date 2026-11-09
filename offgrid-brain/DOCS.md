@@ -26,12 +26,25 @@ in the simulator is the policy that executes.
 
 The add-on adds **Off-Grid Brain** to the Home Assistant sidebar (Ingress, admin only):
 
-- **Live:** battery, load and solar with where each reading came from and how old
-  it is, then the dispatch list exactly as the last tick walked it. Each entry shows
-  its outcome (running, shed, not needed, deficit), how its power split between
-  solar and battery, and why. A gauge shows the battery against each charge rung's
-  floor, with the condition variables the tick saw underneath. Banners appear for
-  safe mode, deficits, expression errors and a stalled loop.
+- **Live:** a **timeline** of the last 24 h, as the brain recorded it, and the next
+  24 h, projected (battery %, solar used and available, load, and when loads shed).
+  The projection walks the dispatch list in half-hour steps, using the solar
+  forecast and the last day's load at the same time of day; hours where the battery
+  would sit at the reserve are tinted. Click or drag the timeline to look at any
+  moment, or press **Replay** to play the last day at 60× until it catches up to now.
+  Under it are three panels for the moment being viewed:
+  - **Battery:** a ring with each charge rung's floor and the reserve, the
+    charge/discharge rate as an inner arc, and when it reaches full or the next floor.
+  - **Load and solar:** the load against solar available and the battery inverter's
+    continuous, surge and peak ratings.
+  - **Loads:** which are running and which are shed.
+
+  Below them is the dispatch list exactly as the last tick walked it: each entry's
+  outcome (running, shed, not needed, deficit), how its power split between solar
+  and battery, and why. The condition variables the tick saw are underneath. Banners
+  appear for safe mode, deficits, expression errors and a stalled loop. The brain
+  keeps its own history (one sample a minute, in `/data/timeline.json`), so the
+  timeline needs no recorder or database.
 - **Policy:** edit `policy.json` in place. **Check** validates the structure and
   compiles every condition, then previews the candidate against the last tick's
   readings: which devices would start or shed. **Apply** saves it (the previous
@@ -161,8 +174,25 @@ It needs a solar sensor on the gateway, such as a WS90.
 ### Other readings
 
 Settings → Readings maps the readings that don't belong to the battery or an
-inverter: **irradiance** (when no Ecowitt gateway is polled), **outdoor
-temperature** and the **solar forecast** for today (kWh). All are optional.
+inverter: **irradiance** (when no Ecowitt gateway is polled) and **outdoor
+temperature**. Both are optional.
+
+### Solar forecast
+
+The brain reads the hourly forecasts that Home Assistant's Energy dashboard has
+attached to solar, through the same call the dashboard uses, and adds them up
+across every plane. To set it up, add a forecast integration (Forecast.Solar,
+Solcast, ...) with one plane per array. Then, in Settings → Dashboards → Energy, pick
+it as the forecast on each solar source. The forecast drives:
+
+- `autonomy`, which plans for the worse of today's and tomorrow's totals (the
+  simulator's worst-day lookahead);
+- the `forecast` variable, which is the next 24 h of forecast PV over the expected
+  daily load;
+- the Live timeline's projection.
+
+**Solar forecast override** in Settings takes a single kWh entity instead, if you'd
+rather use one.
 
 ### Loads: what the brain may switch
 
@@ -185,7 +215,9 @@ but never actuates it. Use that for anything not yet wired.
 ### `battery`
 
 `capacity_kwh`, `inverter_kw` (the battery inverter's continuous rating),
-`max_charge_kw`, `reserve_pct` (the floor nothing may discharge below).
+`max_charge_kw`, `reserve_pct` (the floor nothing may discharge below), and
+optionally `surge_kw` (about 30 minutes) and `peak_kw` (about 60 seconds), which
+are marked on the Live load gauge. An SP PRO 7.5 is 7.5 / 11 / 13 kW.
 
 ### Fronius inverters
 
@@ -296,10 +328,12 @@ as in the simulator; the panel, log and MQTT sensor show it in hours.
   so policies relying on them behave as if the value were zero. Zone thermal
   dispatch isn't implemented yet; this release handles switchable loads.
 - `forecast` approximates the simulator's "next 24 h PV ÷ seasonal median" using the
-  forecast entity over trailing mean load, and is 1.0 when no forecast is mapped.
-  The simulator has perfect foresight and the brain doesn't. This is the largest
+  next 24 h of forecast over trailing mean load, and is 1.0 when there is no forecast.
+  The simulator has perfect foresight and the brain has a forecast with error. This is the largest
   known sim/reality divergence. `autonomy` self-corrects against real SoC every
   tick, which is why a single merit ladder was chosen over per-regime ladders.
+- The timeline's projection repeats the last day's measured load, so it doesn't
+  remove the load that shed devices would have drawn.
 
 ## Dependencies
 

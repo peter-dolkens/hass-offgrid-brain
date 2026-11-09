@@ -30,10 +30,13 @@ const { Actuator } = require("./sinks/actuator.js");
 const { MqttSink, resolveBroker } = require("./sinks/mqtt.js");
 const { decide } = require("./policy/dispatch.js");
 const { buildContext, LoadHistory } = require("./policy/context.js");
+const { Recorder, project, loadProfile } = require("./policy/timeline.js");
 const { startServer, savePolicy } = require("./web/server.js");
 const VERSION = require("./package.json").version;
 
 const STATE_PATH = "/data/brain-state.json";
+const TIMELINE_PATH = "/data/timeline.json";
+const TIMELINE_SAVE_MS = 5 * 60 * 1000;
 
 function loadState() {
   try { return JSON.parse(fs.readFileSync(STATE_PATH, "utf8")); } catch { return {}; }
@@ -83,6 +86,10 @@ async function main() {
   let history = LoadHistory.fromJSON(saved.history, settings.autonomy.window_days, settings.autonomy.seed_load_kwh);
   // Per-array factors learned so far (irradiance -> available kW) survive restarts.
   const estimator = new SolarEstimator({ state: saved.solar });
+  // The Live timeline's last day, one sample a minute. Written every few minutes,
+  // not every tick: it's ~200 kB.
+  const recorder = Recorder.load(TIMELINE_PATH);
+  let timelineSavedAt = Date.now();
 
   // ---- parts rebuilt when their settings change ------------------------------
   let splink = null, ecowitt = null, timer = null;
@@ -141,6 +148,22 @@ async function main() {
   // decided in, so a candidate policy can be previewed against the same moment.
   let snapshot = { starting: true, version: VERSION, dryRun: settings.dry_run };
   let lastCtx = null;
+  let lastTick = null;   // what the timeline's projection starts from
+  function timeline() {
+    const now = Date.now();
+    const past = recorder.since(now - 24 * 3600 * 1000);
+    const devices = policy.devices.map((d) => ({ id: d.id, name: d.name || d.id, kw: d.kw }));
+    const floors = [...new Set(policy.list.filter((e) => e.type === "charge" && e.to < 100).map((e) => e.to))].sort((a, b) => a - b);
+    const base = { now, from: now - 24 * 3600 * 1000, to: now + 24 * 3600 * 1000, battery: settings.battery, floors, devices, past };
+    if (!lastTick) return { ...base, future: [] };
+    const future = project({
+      now, soc: lastTick.soc, ctx: lastTick.ctx, policy, limits, battery: settings.battery,
+      forecast: forecast.between(now - 3600 * 1000, now + 25 * 3600 * 1000),
+      load: loadProfile(past, lastTick.loadKw),
+      autonomy: lastTick.autonomy,
+    });
+    return { ...base, future, forecast: lastTick.forecast };
+  }
   const summarise = (r) => ({
     trace: r.trace, decisions: r.decisions, floorPct: r.floorPct, chargeKw: r.charge,
     deficitKw: r.deficitKw, budgetKw: r.budget, errors: r.errors,
@@ -165,6 +188,7 @@ async function main() {
       runTick();
     },
     listEntities: () => ha.listEntities(),
+    getTimeline: timeline,
   });
 
   // ---- tick ----------------------------------------------------------------
@@ -303,6 +327,12 @@ async function main() {
     }
 
     lastCtx = ctx;
+    const battKw = batt.batteryKw.ageSec < STALE_SEC ? batt.batteryKw.value : NaN;
+    recorder.add(now.getTime(), {
+      soc: socUsable ? socEnt.value : NaN, loadKw, pvKw: pvDelivered, availKw: pvAvailable, battKw,
+      run: result.decisions.filter((d) => d.run).map((d) => d.id), shed: result.shed.map((d) => d.id), floorPct: result.floorPct,
+    });
+    if (now - timelineSavedAt >= TIMELINE_SAVE_MS) { recorder.save(TIMELINE_PATH); timelineSavedAt = now.getTime(); }
     snapshot = {
       time: now.toISOString(), version: VERSION, dryRun, safeMode, tickSec, battery,
       inputs: { soc: socEnt, loadKw: loadEnt, pvKw: pvEnt, batteryKw: batt.source === "none" ? null : batt.batteryKw, energy: batt.energy, inverters: inv },
@@ -314,7 +344,14 @@ async function main() {
       },
       ctx,
       result: summarise(result),
+      limits: { surgeKw: battery.surge_kw, peakKw: battery.peak_kw },
       devices: policy.devices.map((d) => ({ id: d.id, name: d.name, switch: d.switch || null })),
+    };
+
+    lastTick = {
+      soc, ctx, loadKw: Number.isFinite(loadKw) ? loadKw : NaN,
+      autonomy: { expectedLoadKwh: history.expectedDailyKwh(), forecastKwh },
+      forecast: snapshot.forecast,
     };
 
     await actuator.apply(result.decisions);
@@ -328,6 +365,7 @@ async function main() {
   process.on("SIGTERM", () => {
     log.info("shutting down");
     saveState({ history: history.toJSON(), solar: estimator.toJSON() });
+    recorder.save(TIMELINE_PATH);
     process.exit(0);
   });
 }

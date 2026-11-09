@@ -11,14 +11,17 @@
     --bg: #f5f6f8; --card: #ffffff; --text: #1c2128; --muted: #5f6b7a; --line: #dde2e8;
     --accent: #2f6fd6; --good: #1e8a4c; --good-bg: #e3f4ea; --bad: #c33a2c; --bad-bg: #fbe6e3;
     --warn: #9a6200; --warn-bg: #fdf1d8; --idle: #77808c; --idle-bg: #eef0f3; --charge: #2f6fd6; --charge-bg: #e4edfb;
-    --pv: #e2a400; --batt: #7a5af5; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    /* Series colours: the reference palette's first three slots, validated as a set. */
+    --pv: #2a78d6; --solar-av: #b7d3f6; --batt: #1baf7a; --load: #eb6834; --track: #eceef1; --floor: #6b7685;
+    --reserve: #d03b3b; --surge: #fdebd8; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #111418; --card: #1b2027; --text: #e6e9ee; --muted: #9aa5b3; --line: #2c333c;
       --accent: #6ea0ff; --good: #5cd08e; --good-bg: #173326; --bad: #ff8a7d; --bad-bg: #3a1d1a;
       --warn: #f2bd4b; --warn-bg: #362b12; --idle: #8d97a3; --idle-bg: #232a32; --charge: #7aa8ff; --charge-bg: #1c2a42;
-      --pv: #f2c14b; --batt: #a990ff;
+      --pv: #3987e5; --solar-av: #1f4a80; --batt: #199e70; --load: #d95926; --track: #262c34; --floor: #8d97a3;
+      --reserve: #ff8a7d; --surge: #3a2a1a; color-scheme: dark;
     }
   }
   * { box-sizing: border-box; }
@@ -39,23 +42,32 @@
   .banner { padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; font-weight: 600; }
   .banner.bad { background: var(--bad-bg); color: var(--bad); }
   .banner.warn { background: var(--warn-bg); color: var(--warn); }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
-  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
-  .tile .label { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
-  .tile .value { font-size: 24px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
-  .tile .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  /* Live: timeline over three gauges */
+  .tl-bar { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; padding: 10px 14px 0; }
+  .tl-time { font: 600 15px var(--mono); font-variant-numeric: tabular-nums; }
+  .tl-chart { padding: 6px 8px 0; touch-action: none; cursor: crosshair; }
+  .tl-chart svg, .gauges svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .gauges svg { max-width: 260px; margin: 0 auto; }
+  .tl-foot { display: flex; gap: 6px 14px; flex-wrap: wrap; padding: 6px 14px 12px; font-size: 12px; color: var(--muted); }
+  .tl-foot i { display: inline-block; width: 12px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .gauges { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+  .panel h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 0 0 6px; font-weight: 650;
+              display: flex; gap: 8px; align-items: baseline; }
+  .panel h3 .when { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--accent); }
+  .panel .legend { flex-wrap: wrap; margin-top: 8px; }
+  .panel .sub { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .loads { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
+  .loads .ld { display: flex; justify-content: space-between; gap: 8px; align-items: center; font-size: 13px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+  .loads .ld:last-child { border-bottom: 0; }
+  .loads .ld span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .counts { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .tip { position: fixed; pointer-events: none; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px;
+         font: 12px var(--mono); box-shadow: 0 4px 14px rgba(0,0,0,.15); z-index: 20; white-space: nowrap; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 14px; overflow: hidden; }
   .card h2 { font-size: 14px; margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--line); font-weight: 650;
              display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
   .card h2 .muted { font-weight: 400; font-size: 12px; }
-  /* SoC gauge with the charge rungs as floors */
-  .gauge { padding: 18px 14px 26px; }
-  .bar { position: relative; height: 18px; border-radius: 9px; background: var(--idle-bg); }
-  .bar .fill { position: absolute; inset: 0 auto 0 0; border-radius: 9px; background: var(--good); opacity: .85; }
-  .bar .rung { position: absolute; top: -5px; bottom: -5px; width: 2px; background: var(--charge); }
-  .bar .rung span { position: absolute; top: 26px; transform: translateX(-50%); font-size: 11px; color: var(--charge); white-space: nowrap; }
-  .bar .reserve { background: var(--bad); }
-  .bar .reserve span { color: var(--bad); }
   /* The dispatch list */
   .row { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--line); align-items: start; }
   .row:first-child { border-top: 0; }
@@ -135,14 +147,29 @@
 <main>
   <section id="tab-live">
     <div id="banners"></div>
-    <div class="tiles" id="tiles"></div>
     <div class="card">
-      <h2>Battery and floors <span class="muted">Charge rungs fill the battery to their level and stop anything below them discharging past it.</span></h2>
-      <div class="gauge"><div class="bar" id="bar"></div></div>
+      <h2>Timeline <span class="muted">The last 24 h as the brain recorded it, and the next 24 h projected from the solar forecast and the last day's load. Click or drag to look at any moment.</span></h2>
+      <div class="tl-bar">
+        <button class="btn" id="tl-play" aria-label="Replay the last 24 hours">▶ Replay</button>
+        <button class="btn" id="tl-now" hidden>Back to now</button>
+        <span class="tl-time" id="tl-time">now</span>
+        <span class="muted" id="tl-note"></span>
+      </div>
+      <div class="tl-chart" id="tl-chart"><div class="empty">Loading…</div></div>
+      <div class="tl-foot">
+        <span><i style="background:var(--batt)"></i>battery %</span><span><i style="background:var(--floor)"></i>floors</span>
+        <span><i style="background:var(--reserve)"></i>reserve</span><span><i style="background:var(--pv)"></i>solar used</span>
+        <span><i style="background:var(--solar-av)"></i>solar available</span><span><i style="background:var(--load)"></i>load</span>
+        <span><i style="background:var(--bad)"></i>loads shed</span><span>dashed = projected</span>
+      </div>
     </div>
-    <div class="card" id="solar-card" hidden>
-      <h2>Solar arrays <span class="muted">Off grid the inverters are throttled to the load once the battery is full. Available is what the sun could give, from irradiance and each array's learned factor.</span></h2>
-      <div id="solar"></div>
+    <div class="gauges">
+      <div class="panel"><h3>Battery <span class="when" id="g-when-b"></span></h3><div id="g-batt"></div>
+        <div class="legend"><span><i style="background:var(--batt)"></i>charge / charging</span><span><i style="background:var(--load)"></i>discharging</span><span><i style="background:var(--floor)"></i>floors</span></div></div>
+      <div class="panel"><h3>Load and solar <span class="when" id="g-when-l"></span></h3><div id="g-load"></div>
+        <div class="legend"><span><i style="background:var(--load)"></i>load</span><span><i style="background:var(--solar-av)"></i>solar available</span><span><i style="background:var(--surge)"></i>above continuous</span></div>
+        <div class="sub" id="g-arrays"></div></div>
+      <div class="panel"><h3>Loads <span class="when" id="g-when-d"></span></h3><div id="g-loads"></div></div>
     </div>
     <div class="card">
       <h2>Dispatch list
@@ -296,53 +323,297 @@ function renderLive() {
   if (tickAge > 3 * s.tickSec) banners.push(`<div class="banner warn">No tick for ${Math.round(tickAge)} s.</div>`);
   $("banners").innerHTML = banners.join("");
 
-  const i = s.inputs;
-  const src = (r) => `${esc(r.from || "none")} · ${agoEl(r.ageSec)}`;
-  const running = s.result.decisions.filter((d) => d.run).length;
-  const tiles = [
-    ["Battery", `${fmt(i.soc.value)}%`, src(i.soc)],
-    ["Load", watts(i.loadKw.value), src(i.loadKw)],
-    s.solar && Number.isFinite(s.solar.availableKw)
-      ? ["Solar", `${watts(s.solar.deliveredKw)} / ${watts(s.solar.availableKw)}`,
-         `delivered / available${s.solar.curtailed ? " · throttled" : ""} · ${fmt(s.solar.irradiance.value, 0)} W/m²`]
-      : ["Solar", watts(i.pvKw.value), src(i.pvKw)],
-    ["Autonomy", `${fmt(s.ctx.autonomy * 24, 0)} h`, "usable battery ÷ worst expected deficit"],
-    ["Charging", watts(s.result.chargeKw), `spare solar after the list: ${watts(s.result.budgetKw)}`],
-    ["Devices", `${running} / ${s.result.decisions.length}`, `running · ${s.result.decisions.length - running} shed`],
-  ];
-  $("tiles").innerHTML = tiles.map(([l, v, sub]) =>
-    `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join("");
-
-  const soc = Number.isFinite(i.soc.value) ? i.soc.value : null;
-  const rungs = s.result.trace.filter((t) => t.type === "charge").map((t) => t.to);
-  $("bar").innerHTML = `<div class="fill" style="width:${soc == null ? 0 : soc}%"></div>
-    <div class="rung reserve" style="left:${s.battery.reserve_pct}%"><span>reserve ${s.battery.reserve_pct}%</span></div>
-    ${[...new Set(rungs)].filter((r) => r !== s.battery.reserve_pct && r < 100)
-      .map((r) => `<div class="rung" style="left:${r}%"><span>${r}%</span></div>`).join("")}`;
-
-  renderSolar(s.solar);
+  renderGauges();
   $("list").innerHTML = s.result.trace.length ? s.result.trace.map(renderRow).join("") : '<div class="empty">The list is empty.</div>';
   $("vars").innerHTML = Object.entries(s.ctx).map(([k, v]) =>
     `<span>${k}=${typeof v === "number" ? (Number.isInteger(v) ? v : v.toFixed(2)) : esc(v)}</span>`).join("");
 }
 
-function renderSolar(sol) {
-  $("solar-card").hidden = !sol || !sol.arrays || !sol.arrays.length;
-  if ($("solar-card").hidden) return;
-  const head = `<div class="vars"><span>irradiance ${fmt(sol.irradiance.value, 0)} W/m² (${esc(sol.irradiance.from)}, ${agoEl(sol.irradiance.ageSec)})</span>
-    <span>charger ${esc(sol.charger || "—")}</span>
-    <span>${sol.unconstrained ? "unthrottled: learning" : "not learning (battery full or near the charge limit)"}</span></div>`;
-  const rows = sol.arrays.map((a) => {
-    const pct = a.availableKw > 0 ? Math.min(100, (100 * (a.kw || 0)) / a.availableKw) : 0;
-    return `<div class="row"><div class="idx"></div>
-      <div><div class="name">${esc(a.name)} <span class="muted">${fmt(a.kwp, 2)} kWp · ${a.acKw ? `${fmt(a.acKw, 1)} kW AC` : '<span class="live-warn">no AC rating set (capped at kWp)</span>'}</span></div>
-        <div class="why">Delivering ${watts(a.kw)} of ${watts(a.availableKw)} available · headroom ${watts(a.headroomKw)} ·
-          factor ${fmt(a.k, 2)} from ${a.samples} sample${a.samples === 1 ? "" : "s"}${a.samples ? "" : " (typical value until it learns)"}</div>
-        <div class="split"><div class="pv" style="width:${pct}%"></div></div></div>
-      <div><span class="chip ${a.curtailed ? "partial" : "granted"}">${a.curtailed ? "throttled" : "at capacity"}</span></div></div>`;
-  }).join("");
-  $("solar").innerHTML = head + rows;
+// ---------- timeline and gauges ----------
+// The timeline holds the last day as recorded and the next day as projected.
+// `view` is the moment the gauges show: null is now (live, refreshed every tick);
+// a time is a moment picked on the timeline or reached by the replay.
+const HOUR_MS = 3600 * 1000;
+const SPEED = 60;                       // replay: one minute of history per second
+let tl = null;                          // last /api/timeline
+let view = null;
+let playing = false;
+
+const n = (x) => (x == null ? NaN : x);
+const kw = (v) => (!Number.isFinite(v) ? "—" : Math.abs(v) < 1 ? `${Math.round(v * 1000)} W` : `${v.toFixed(1)} kW`);
+const clock = (t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function dayClock(t) {
+  const d = new Date(t), same = d.toDateString() === new Date().toDateString();
+  return `${same ? "" : `${d.toLocaleDateString([], { weekday: "short" })} `}${clock(t)}`;
 }
+const hm = (h) => (!Number.isFinite(h) ? "—" : h < 1 ? `${Math.max(1, Math.round(h * 60))} min` : h < 48 ? `${h.toFixed(h < 10 ? 1 : 0)} h` : `${(h / 24).toFixed(1)} days`);
+function niceMax(v) {
+  if (!(v > 0)) return 1;
+  const p = 10 ** Math.floor(Math.log10(v));
+  return [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].map((m) => m * p).find((m) => m >= v);
+}
+// Arc from a0 to a1 degrees, 0 = top, clockwise.
+function arcPath(cx, cy, r, a0, a1) {
+  const p = (a) => [cx + r * Math.sin((a * Math.PI) / 180), cy - r * Math.cos((a * Math.PI) / 180)];
+  const [x0, y0] = p(a0), [x1, y1] = p(a1);
+  return `M${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`;
+}
+const txt = (x, y, s, o = {}) => `<text x="${x.toFixed ? x.toFixed(1) : x}" y="${y.toFixed ? y.toFixed(1) : y}" text-anchor="${o.a || "middle"}" font-size="${o.size || 11}" font-weight="${o.w || 400}" fill="${o.fill || "var(--text)"}"${o.mono ? ' font-family="var(--mono)"' : ""}>${s}</text>`;
+
+/** What the gauges show for now: the last tick. */
+function liveMoment() {
+  const s = state;
+  if (!s || s.starting) return null;
+  const i = s.inputs, sol = s.solar || {};
+  const v = (r) => (r && Number.isFinite(r.value) ? r.value : NaN);
+  return {
+    t: Date.parse(s.time), soc: v(i.soc), battKw: v(i.batteryKw), loadKw: v(i.loadKw),
+    pvKw: Number.isFinite(sol.deliveredKw) ? sol.deliveredKw : v(i.pvKw), availKw: n(sol.availableKw),
+    run: s.result.decisions.filter((d) => d.run).map((d) => d.id),
+    shed: s.result.decisions.filter((d) => !d.run).map((d) => d.id), floorPct: s.result.floorPct,
+  };
+}
+/** The recorded or projected sample nearest a moment. */
+function momentAt(t) {
+  if (t == null || !tl) return liveMoment();
+  const list = t <= tl.now ? tl.past : tl.future;
+  if (!list.length) return liveMoment();
+  let best = list[0];
+  for (const x of list) if (Math.abs(x.t - t) < Math.abs(best.t - t)) best = x;
+  return { ...best, t, projected: t > tl.now,
+    soc: n(best.soc), battKw: n(best.battKw), loadKw: n(best.loadKw), pvKw: n(best.pvKw), availKw: n(best.availKw) };
+}
+const floorsOf = () => [state.battery.reserve_pct, ...((tl && tl.floors) || []).filter((f) => f > state.battery.reserve_pct)];
+
+function batteryGauge(m) {
+  const b = state.battery, START = -135, SPAN = 270;
+  const ang = (f) => START + SPAN * Math.max(0, Math.min(1, f));
+  const soc = m.soc, rate = m.battKw;
+  const rateF = !Number.isFinite(rate) ? 0 : rate >= 0 ? rate / b.max_charge_kw : -rate / b.inverter_kw;
+  let foot = "holding";
+  if (!Number.isFinite(soc)) foot = "no reading";
+  else if (rate > 0.02) foot = soc >= 99.5 ? "full" : `full in ${hm(((100 - soc) / 100) * b.capacity_kwh / rate)}`;
+  else if (rate < -0.02) {
+    const below = floorsOf().filter((f) => f < soc).sort((a, z) => z - a)[0];
+    foot = below == null ? "at the reserve" : `${below}% floor in ${hm(((soc - below) / 100) * b.capacity_kwh / -rate)}`;
+  } else if (soc >= 99.5) foot = "full";
+  const ticks = floorsOf().map((f) => {
+    const a = (ang(f / 100) * Math.PI) / 180, res = f === b.reserve_pct;
+    return `<line x1="${100 + 68 * Math.sin(a)}" y1="${95 - 68 * Math.cos(a)}" x2="${100 + 90 * Math.sin(a)}" y2="${95 - 90 * Math.cos(a)}" stroke="${res ? "var(--reserve)" : "var(--floor)"}" stroke-width="2"/>`
+      + txt(100 + 102 * Math.sin(a), 95 - 102 * Math.cos(a) + 4, `${f}%`, { size: 9, fill: res ? "var(--reserve)" : "var(--muted)", mono: true });
+  }).join("");
+  const au = view == null && state.ctx ? state.ctx.autonomy : NaN;
+  const auText = !Number.isFinite(au) ? "" : au >= 99 ? "forecast solar covers the load" : `autonomy ${hm(au * 24)}`;
+  return `<svg viewBox="0 0 200 190" role="img" aria-label="Battery ${fmt(soc)}%, ${esc(foot)}">
+    <path d="${arcPath(100, 95, 78, START, START + SPAN)}" stroke="var(--track)" stroke-width="14" fill="none" stroke-linecap="round"/>
+    ${Number.isFinite(soc) ? `<path d="${arcPath(100, 95, 78, START, ang(Math.max(0.005, soc / 100)))}" stroke="var(--batt)" stroke-width="14" fill="none" stroke-linecap="round"/>` : ""}
+    <path d="${arcPath(100, 95, 60, START, START + SPAN)}" stroke="var(--track)" stroke-width="5" fill="none" stroke-linecap="round"/>
+    ${rateF > 0.003 ? `<path d="${arcPath(100, 95, 60, START, ang(rateF))}" stroke="${rate >= 0 ? "var(--batt)" : "var(--load)"}" stroke-width="5" fill="none" stroke-linecap="round"/>` : ""}
+    ${ticks}
+    ${txt(100, 92, Number.isFinite(soc) ? `${soc.toFixed(1)}%` : "—", { size: 26, w: 700 })}
+    ${txt(100, 112, rate > 0.02 ? `charging ${kw(rate)}` : rate < -0.02 ? `discharging ${kw(-rate)}` : "idle", { size: 11.5, fill: "var(--muted)" })}
+    ${txt(100, 168, esc(foot), { size: 11.5, w: 600 })}
+    ${auText ? txt(100, 184, esc(auText), { size: 10.5, fill: "var(--muted)" }) : ""}
+  </svg>`;
+}
+
+function loadGauge(m) {
+  const b = state.battery, START = -135, SPAN = 270;
+  const marks = [[b.inverter_kw, `${b.inverter_kw}`], [b.surge_kw, `${b.surge_kw}`], [b.peak_kw, `${b.peak_kw}`]].filter(([v]) => v > 0);
+  const MAX = b.peak_kw || b.surge_kw || b.inverter_kw * 1.5;
+  marks[marks.length - 1][1] += " kW";
+  const ang = (v) => START + SPAN * Math.max(0, Math.min(1, v / MAX));
+  const avail = Number.isFinite(m.availKw) ? Math.max(m.availKw, n(m.pvKw) || 0) : n(m.pvKw);
+  const unused = avail - (n(m.pvKw) || 0);
+  const foot = !Number.isFinite(avail) ? "no solar reading" : avail < 0.05 ? "no sun" : unused > 0.3 ? `${kw(unused)} of sun unused` : "using all the sun";
+  return `<svg viewBox="0 0 200 190" role="img" aria-label="Load ${kw(m.loadKw)}, solar ${kw(m.pvKw)} of ${kw(avail)}">
+    <path d="${arcPath(100, 95, 78, START, START + SPAN)}" stroke="var(--track)" stroke-width="14" fill="none" stroke-linecap="round"/>
+    <path d="${arcPath(100, 95, 78, ang(b.inverter_kw), START + SPAN)}" stroke="var(--surge)" stroke-width="14" fill="none"/>
+    ${avail > 0.01 ? `<path d="${arcPath(100, 95, 78, START, ang(Math.min(avail, MAX)))}" stroke="var(--solar-av)" stroke-width="14" fill="none" stroke-linecap="round"/>` : ""}
+    ${Number.isFinite(m.loadKw) ? `<path d="${arcPath(100, 95, 78, START, Math.max(START + 1.5, ang(m.loadKw)))}" stroke="var(--load)" stroke-width="6" fill="none" stroke-linecap="round"/>` : ""}
+    ${marks.map(([v, l]) => { const a = (ang(v) * Math.PI) / 180;
+      return `<line x1="${100 + 68 * Math.sin(a)}" y1="${95 - 68 * Math.cos(a)}" x2="${100 + 90 * Math.sin(a)}" y2="${95 - 90 * Math.cos(a)}" stroke="var(--floor)" stroke-width="1.5"/>`
+        + txt(100 + 102 * Math.sin(a), 95 - 102 * Math.cos(a) + 4, l, { size: 9, fill: "var(--muted)", mono: true }); }).join("")}
+    ${txt(100, 92, kw(m.loadKw), { size: 26, w: 700 })}
+    ${txt(100, 112, `solar ${kw(m.pvKw)} of ${kw(avail)}`, { size: 11.5, fill: "var(--muted)" })}
+    ${txt(100, 168, foot, { size: 11.5, w: 600 })}
+    ${m.loadKw > b.inverter_kw ? txt(100, 184, `over the ${b.inverter_kw} kW continuous rating`, { size: 10.5, fill: "var(--bad)", w: 600 }) : ""}
+  </svg>`;
+}
+
+function loadsPanel(m) {
+  const devs = (tl && tl.devices) || state.devices || [];
+  const run = new Set(m.run || []), shed = new Set(m.shed || []);
+  const rank = (d) => (shed.has(d.id) ? 0 : run.has(d.id) ? 1 : 2);
+  const rows = devs.slice().sort((a, z) => rank(a) - rank(z)).map((d) => {
+    const st = shed.has(d.id) ? ["shed", "shed"] : run.has(d.id) ? ["granted", "running"] : ["idle", "not needed"];
+    return `<div class="ld"><span>${esc(d.name || d.id)}</span><span class="chip ${st[0]}">${st[1]}</span></div>`;
+  }).join("");
+  return `<div class="counts"><span class="chip granted">${run.size} running</span><span class="chip ${shed.size ? "shed" : "idle"}">${shed.size} shed</span>
+      <span class="chip idle">${Math.max(0, devs.length - run.size - shed.size)} not needed</span></div>
+    <div class="loads">${rows || '<div class="muted">No loads in the policy.</div>'}</div>`;
+}
+
+function renderGauges() {
+  const m = momentAt(view);
+  if (!m) return;
+  const when = view == null ? "" : `${m.projected ? "projected " : ""}${dayClock(view)}`;
+  for (const id of ["g-when-b", "g-when-l", "g-when-d"]) $(id).textContent = when;
+  $("g-batt").innerHTML = batteryGauge(m);
+  $("g-load").innerHTML = loadGauge(m);
+  $("g-loads").innerHTML = loadsPanel(m);
+  const arrays = (state.solar && state.solar.arrays) || [];
+  $("g-arrays").innerHTML = view != null ? (m.projected ? "Solar from the forecast; load repeats the last day's." : "")
+    : arrays.filter((a) => a.availableKw > 0.05).map((a) => `${esc(a.name)} ${kw(a.kw)} of ${kw(a.availableKw)}${a.curtailed ? " (throttled)" : ""}`).join(" · ");
+  $("tl-time").textContent = view == null ? "now" : dayClock(view);
+  $("tl-now").hidden = view == null;
+  $("tl-play").textContent = playing ? "❚❚ Pause" : view == null ? "▶ Replay" : "▶ Play";
+}
+
+// ----- the timeline chart -----
+let geo = null;   // scales of the chart last drawn, for the playhead and pointer
+function segments(list, key, maxGap) {
+  const out = []; let cur = [];
+  for (const p of list) {
+    const v = n(p[key]);
+    if (!Number.isFinite(v) || (cur.length && p.t - cur[cur.length - 1][0] > maxGap)) { if (cur.length) out.push(cur); cur = []; }
+    if (Number.isFinite(v)) cur.push([p.t, v]);
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
+function drawTimeline() {
+  const el = $("tl-chart");
+  if (!tl || !state || state.starting) return;
+  const W = Math.max(300, el.clientWidth - 16), H = W < 560 ? 220 : 250;
+  const M = { l: 38, r: 10, t: 10 };
+  const socTop = M.t, socBot = H * 0.42, kwTop = socBot + 28, kwBot = H - 34, shedY = H - 28, axisY = H - 6;
+  const x = (t) => M.l + ((t - tl.from) / (tl.to - tl.from)) * (W - M.l - M.r);
+  const ys = (v) => socTop + (1 - v / 100) * (socBot - socTop);
+  const b = state.battery;
+  const all = [...tl.past, ...tl.future];
+  const kwMax = niceMax(Math.max(1, ...all.map((p) => Math.max(n(p.loadKw) || 0, n(p.availKw) || 0, n(p.pvKw) || 0))));
+  const yk = (v) => kwBot - (Math.min(v, kwMax) / kwMax) * (kwBot - kwTop);
+  geo = { x, ys, W, H, socTop, kwBot, from: tl.from, to: tl.to, M };
+  const line = (segs, y) => segs.map((s) => `M${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}`).join("");
+  const area = (segs, y) => segs.map((s) => `M${x(s[0][0]).toFixed(1)},${kwBot}L${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}L${x(s[s.length - 1][0]).toFixed(1)},${kwBot}Z`).join("");
+  const parts = [];
+  // grid
+  for (const v of [0, 50, 100]) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${ys(v)}" y2="${ys(v)}" stroke="var(--line)"/>${txt(M.l - 5, ys(v) + 3, `${v}%`, { a: "end", size: 10, fill: "var(--muted)", mono: true })}`);
+  for (const v of [0, kwMax / 2, kwMax]) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${yk(v)}" y2="${yk(v)}" stroke="var(--line)"/>${txt(M.l - 5, yk(v) + 3, `${+v.toFixed(1)}`, { a: "end", size: 10, fill: "var(--muted)", mono: true })}`);
+  parts.push(txt(M.l + 4, kwTop - 4, "kW", { a: "start", size: 10, fill: "var(--muted)", mono: true }));
+  for (const f of floorsOf()) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${ys(f)}" y2="${ys(f)}" stroke="${f === b.reserve_pct ? "var(--reserve)" : "var(--floor)"}" stroke-dasharray="3 4" stroke-width="1"/>`);
+  // hours
+  for (let t = Math.ceil(tl.from / HOUR_MS) * HOUR_MS; t <= tl.to; t += HOUR_MS) {
+    const h = new Date(t).getHours();
+    if (h % (W < 560 ? 12 : 6)) continue;
+    parts.push(`<line x1="${x(t)}" x2="${x(t)}" y1="${socTop}" y2="${shedY + 6}" stroke="var(--line)" stroke-width="${h ? 1 : 1.5}"/>`
+      + txt(x(t), axisY, h ? clock(t) : new Date(t).toLocaleDateString([], { weekday: "short" }), { size: 10, fill: "var(--muted)", mono: !!h, w: h ? 400 : 650 }));
+  }
+  // series: past solid, projection dashed / faded
+  const draw = (list, gap, proj) => {
+    const op = proj ? ' opacity=".55"' : "", dash = proj ? ' stroke-dasharray="5 4"' : "";
+    parts.push(`<path d="${area(segments(list, "availKw", gap), yk)}" fill="var(--solar-av)"${op}/>`);
+    parts.push(`<path d="${area(segments(list, "pvKw", gap), yk)}" fill="var(--pv)"${proj ? ' opacity=".45"' : ' opacity=".85"'}/>`);
+    parts.push(`<path d="${line(segments(list, "loadKw", gap), yk)}" fill="none" stroke="var(--load)" stroke-width="2" stroke-linejoin="round"${dash}/>`);
+    parts.push(`<path d="${line(segments(list, "soc", gap), ys)}" fill="none" stroke="var(--batt)" stroke-width="2.5" stroke-linejoin="round"${dash}/>`);
+    for (let k = 0; k < list.length; k++) {
+      const p = list[k];
+      if (!p.shed || !p.shed.length) continue;
+      const t1 = k + 1 < list.length ? Math.min(list[k + 1].t, p.t + gap) : p.t + gap / 2;
+      parts.push(`<rect x="${x(p.t)}" y="${shedY}" width="${Math.max(1, x(t1) - x(p.t))}" height="6" fill="var(--bad)"${op}/>`);
+      if (p.deficit) parts.push(`<rect x="${x(p.t)}" y="${socTop}" width="${Math.max(1, x(t1) - x(p.t))}" height="${socBot - socTop}" fill="var(--bad)" opacity=".08"/>`);
+    }
+  };
+  draw(tl.past, 3 * 60 * 1000, false);
+  draw(tl.future, 31 * 60 * 1000, true);
+  parts.push(`<line x1="${x(tl.now)}" x2="${x(tl.now)}" y1="${socTop - 4}" y2="${shedY + 6}" stroke="var(--text)" stroke-width="1.5" stroke-dasharray="2 3"/>`);
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Battery, solar and load over the last and next 24 hours">
+    ${parts.join("")}<g id="tl-ph"></g><rect id="tl-hit" x="${M.l}" y="0" width="${W - M.l - M.r}" height="${H}" fill="transparent"/></svg>`;
+  drawPlayhead();
+}
+function drawPlayhead() {
+  const g = $("tl-ph");
+  if (!g || !geo) return;
+  const t = view == null ? tl.now : view;
+  const m = momentAt(view);
+  const X = geo.x(Math.max(geo.from, Math.min(geo.to, t)));
+  g.innerHTML = `<line x1="${X}" x2="${X}" y1="${geo.socTop - 6}" y2="${geo.kwBot + 10}" stroke="var(--accent)" stroke-width="2"/>
+    ${m && Number.isFinite(m.soc) ? `<circle cx="${X}" cy="${geo.ys(m.soc)}" r="5" fill="var(--batt)" stroke="var(--card)" stroke-width="2"/>` : ""}`;
+}
+
+// pointer: hover shows a tooltip, press/drag picks the moment the gauges show
+let tip = null, dragging = false;
+function timeAtPointer(ev) {
+  const svg = $("tl-chart").querySelector("svg");
+  if (!svg || !geo) return null;
+  const r = svg.getBoundingClientRect();
+  const px = ((ev.clientX - r.left) / r.width) * geo.W;
+  return geo.from + ((px - geo.M.l) / (geo.W - geo.M.l - geo.M.r)) * (geo.to - geo.from);
+}
+function showTip(ev, t) {
+  if (!tip) { tip = document.createElement("div"); tip.className = "tip"; document.body.appendChild(tip); }
+  const m = momentAt(t);
+  if (!m) return;
+  tip.innerHTML = `${t > tl.now ? "projected " : ""}${dayClock(t)}<br>battery ${fmt(m.soc, 0)}% · load ${kw(m.loadKw)}<br>solar ${kw(m.pvKw)} of ${kw(Number.isFinite(m.availKw) ? m.availKw : m.pvKw)}${(m.shed || []).length ? `<br>${m.shed.length} shed` : ""}`;
+  tip.hidden = false;
+  const w = tip.offsetWidth;
+  tip.style.left = `${Math.min(window.innerWidth - w - 8, ev.clientX + 12)}px`;
+  tip.style.top = `${ev.clientY + 14}px`;
+}
+function pick(t) {
+  if (t == null) return;
+  playing = false;
+  t = Math.max(tl.from, Math.min(tl.to, t));
+  view = Math.abs(t - tl.now) < 2 * 60 * 1000 ? null : t;
+  renderGauges(); drawPlayhead();
+}
+$("tl-chart").addEventListener("pointerdown", (ev) => { if (!tl) return; dragging = true; $("tl-chart").setPointerCapture(ev.pointerId); pick(timeAtPointer(ev)); });
+$("tl-chart").addEventListener("pointermove", (ev) => {
+  if (!tl) return;
+  const t = timeAtPointer(ev);
+  if (t == null || t < tl.from || t > tl.to) { if (tip) tip.hidden = true; return; }
+  if (dragging) pick(t);
+  showTip(ev, t);
+});
+$("tl-chart").addEventListener("pointerup", () => { dragging = false; });
+$("tl-chart").addEventListener("pointerleave", () => { if (tip) tip.hidden = true; });
+
+// replay: from the start of the record (or where it's paused) at 60x until it reaches now
+let lastFrame = 0;
+function frame(ts) {
+  if (!playing) return;
+  const dt = lastFrame ? ts - lastFrame : 0;
+  lastFrame = ts;
+  view += dt * SPEED;
+  if (view >= Date.now()) { view = null; playing = false; }
+  renderGauges(); drawPlayhead();
+  if (playing) requestAnimationFrame(frame);
+}
+$("tl-play").addEventListener("click", () => {
+  if (!tl) return;
+  if (playing) { playing = false; renderGauges(); return; }
+  if (view == null || view >= tl.now) view = tl.past.length ? tl.past[0].t : tl.from;
+  playing = true; lastFrame = 0;
+  requestAnimationFrame(frame);
+});
+$("tl-now").addEventListener("click", () => { playing = false; view = null; renderGauges(); drawPlayhead(); });
+
+async function refreshTimeline() {
+  try {
+    tl = await (await fetch("api/timeline", { cache: "no-store" })).json();
+    const covered = tl.past.length ? tl.now - tl.past[0].t : 0;
+    const fc = tl.forecast || {};
+    $("tl-note").textContent = [
+      covered < 23 * HOUR_MS ? `recorded since ${dayClock(tl.past.length ? tl.past[0].t : tl.now)}` : "",
+      fc.from === "none" || !tl.future.some((p) => p.forecast) ? "no solar forecast: projection assumes no sun" : "",
+    ].filter(Boolean).join(" · ");
+    drawTimeline();
+    renderGauges();
+  } catch (e) { $("tl-note").textContent = `timeline unavailable: ${e.message}`; }
+}
+let resizeT = null;
+window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(drawTimeline, 120); });
 
 /* An age that keeps counting: the element records WHEN the reading was taken
    (the tick time minus its age at that tick), and showAge() re-renders it. */
@@ -588,6 +859,7 @@ function renderBattery() {
     ${fields}
     <div class="row2">${field("Capacity (kWh)", numHtml("capacity_kwh", b.capacity_kwh))}${field("Reserve (%)", numHtml("reserve_pct", b.reserve_pct), "Nothing may discharge below this.")}</div>
     <div class="row2">${field("Inverter (kW)", numHtml("inverter_kw", b.inverter_kw), "Continuous rating.")}${field("Max charge (kW)", numHtml("max_charge_kw", b.max_charge_kw))}</div>
+    <div class="row2">${field("Surge (kW)", numHtml("surge_kw", b.surge_kw, "optional"), "About 30 minutes.")}${field("Peak (kW)", numHtml("peak_kw", b.peak_kw, "optional"), "About 60 seconds.")}</div>
     <div class="now">${soc && Number.isFinite(soc.value) ? `now ${fmt(soc.value)}% · ${esc(soc.from)} · ${agoEl(soc.ageSec)}` : "no SoC reading"}</div>
   </div>`;
   bindTile($("batt-el"), b, renderBattery);
@@ -772,11 +1044,13 @@ for (const b of document.querySelectorAll("nav button")) {
     $("tab-settings").hidden = b.dataset.tab !== "settings";
     if (b.dataset.tab === "policy" && !$("editor").value) loadPolicy();
     if (b.dataset.tab === "settings") loadSettingsTab();
+    if (b.dataset.tab === "live") drawTimeline();   // it can't measure its width while hidden
   };
 }
 
-refresh();
+refresh().then(refreshTimeline);
 setInterval(() => { if (!$("tab-live").hidden) refresh(); }, 5000);
+setInterval(() => { if (!$("tab-live").hidden && !playing) refreshTimeline(); }, 60000);
 setInterval(showAge, 1000);
 </script>
 </body>
