@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.21.0
+- Live: as the pinned timeline shrinks, its controls fold into one pill:
+  **▶ time · 60× ▾**. The play side plays and pauses, the speed chip opens a small
+  menu of 60×, 600× and 900×, and **now ⟲** appears while you're looking at another
+  moment. The full row fades out and the pill fades in, tied to the scroll, and the
+  bar eases from full height to 26 px so nothing jumps.
+- Live: the timeline's side margins are a few pixels wider, and the right one fits
+  its widest kW label, so "15 kW" no longer clips.
+
 ## 0.20.1
 - Live: the timeline card itself now pins and shrinks; the separate pinned copy is
   gone. When its controls reach the header they stay put. As you scroll on, the

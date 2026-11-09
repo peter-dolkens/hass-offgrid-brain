@@ -57,6 +57,20 @@
   #tl-card { margin-bottom: 0; }
   #tl-card.pinned { position: fixed; z-index: 1; }
   #tl-card .tl-foot { overflow: hidden; }
+  .tl-full { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; }
+  .tl-pill { display: inline-flex; align-items: center; gap: 7px; position: relative; border: 1px solid var(--line); border-radius: 999px;
+             padding: 2px 5px 2px 10px; background: var(--card); white-space: nowrap; transform-origin: left center; }
+  .tl-pill button { font: inherit; border: 0; background: none; color: var(--text); cursor: pointer; padding: 2px 0; }
+  .pill-play { font-weight: 650 !important; display: inline-flex; gap: 6px; align-items: center; }
+  .pill-play .js-time { font: 600 12.5px var(--mono); }
+  .pill-speed, .pill-now { font-size: 11px !important; font-weight: 650 !important; border-radius: 999px !important; padding: 2px 8px !important; }
+  .pill-speed { background: var(--accent) !important; color: #fff !important; }
+  .pill-now { background: var(--idle-bg) !important; }
+  .pill-menu { position: absolute; top: calc(100% + 6px); left: 0; display: flex; flex-direction: column; min-width: 90px; z-index: 3;
+               background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .15); overflow: hidden; }
+  .pill-menu button { text-align: left; padding: 7px 12px !important; font-size: 13px !important; font-weight: 600 !important; }
+  .pill-menu button.on { background: var(--accent) !important; color: #fff !important; }
+  .tl-pill button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   .tl-chart svg, .gauges svg { display: block; width: 100%; height: auto; overflow: visible; }
   .gauges svg { max-width: 260px; margin: 0 auto; }
@@ -168,11 +182,21 @@
     <div id="tl-slot"><div class="card" id="tl-card">
       <h2>Timeline <span class="muted">The last 24 h as the brain recorded it, and the next 24 h projected from the solar forecast and the last day's load. Click or drag to look at any moment.</span></h2>
       <div class="tl-bar">
-        <button class="btn js-play" aria-label="Replay the recorded day">▶ Replay</button>
-        <span class="seg js-speed" role="group" aria-label="Replay speed"><button data-speed="60">60×</button><button data-speed="600">600×</button><button data-speed="900">900×</button></span>
-        <button class="btn js-now" hidden>Back to now</button>
-        <span class="tl-time js-time">now</span>
-        <span class="muted" id="tl-note"></span>
+        <span class="tl-full">
+          <button class="btn js-play" aria-label="Replay the recorded day">▶ Replay</button>
+          <span class="seg js-speed" role="group" aria-label="Replay speed"><button data-speed="60">60×</button><button data-speed="600">600×</button><button data-speed="900">900×</button></span>
+          <button class="btn js-now" hidden>Back to now</button>
+          <span class="tl-time js-time">now</span>
+          <span class="muted" id="tl-note"></span>
+        </span>
+        <!-- The same controls as one pill, for the compact timeline: play | time · speed -->
+        <span class="tl-pill" hidden>
+          <button class="pill-play js-pill-play" aria-label="Play or pause the replay"><span class="js-pill-icon">▶</span> <span class="js-time">now</span></button>
+          <span class="muted">·</span>
+          <button class="pill-speed" aria-haspopup="menu" aria-label="Replay speed"><span class="js-speed-label">60×</span> ▾</button>
+          <button class="pill-now js-now" hidden title="Back to now">now ⟲</button>
+          <span class="pill-menu js-speed" role="menu" hidden><button data-speed="60">60×</button><button data-speed="600">600×</button><button data-speed="900">900×</button></span>
+        </span>
       </div>
       <div class="tl-chart" id="tl-chart"><div class="empty">Loading…</div></div>
       <div class="tl-foot">
@@ -608,6 +632,7 @@ function renderGauges() {
   for (const el of document.querySelectorAll(".js-time")) el.textContent = view == null ? "now" : dayClock(view);
   for (const el of document.querySelectorAll(".js-now")) el.hidden = view == null;
   for (const el of document.querySelectorAll(".js-play")) el.textContent = playing ? "❚❚ Pause" : view == null ? "▶ Replay" : "▶ Play";
+  for (const el of document.querySelectorAll(".js-pill-icon")) el.textContent = playing ? "❚❚" : "▶";
 }
 
 // ----- the timeline chart -----
@@ -640,17 +665,19 @@ function drawChart(c, height) {
   // Hour labels, the middle grid line and the axis titles fade out as it shrinks.
   const q = Math.max(0, Math.min(1, (H - MINI_H) / (natural - MINI_H))), mix = (a, b) => a + (b - a) * q;
   const cp = q < 0.5;
+  const all = [...tl.past, ...tl.future];
+  // Scaled to the largest load, solar delivered or solar available seen in the
+  // recorded and projected day, not to what the inverters could do in principle.
+  const kwMax = niceMax(Math.max(0.5, ...all.map((p) => Math.max(n(p.loadKw) || 0, n(p.pvKw) || 0, n(p.availKw) || 0))));
   // One plot: battery % on the left axis and kW on the right, over the same height.
-  const M = { l: 40, r: 40, t: mix(6, 14) };
+  // The right margin fits its widest label ("12.5 kW" once compact) with room to spare.
+  const rLabel = `${+kwMax.toFixed(2)}${cp ? " kW" : ""}`;
+  const M = { l: 43, r: Math.max(43, Math.ceil(rLabel.length * 6.2) + 10), t: mix(6, 14) };
   const top = M.t, bot = mix(H * 0.8, H - 34);
   const shedY = mix(H * 0.84, H - 28), axisY = H - 6, shedH = mix(3, 6);
   const x = (t) => M.l + ((t - tl.from) / (tl.to - tl.from)) * (W - M.l - M.r);
   const ys = (v) => top + (1 - v / 100) * (bot - top);
   const b = state.battery;
-  const all = [...tl.past, ...tl.future];
-  // Scaled to the largest load, solar delivered or solar available seen in the
-  // recorded and projected day, not to what the inverters could do in principle.
-  const kwMax = niceMax(Math.max(0.5, ...all.map((p) => Math.max(n(p.loadKw) || 0, n(p.pvKw) || 0, n(p.availKw) || 0))));
   const yk = (v) => bot - (Math.min(v, kwMax) / kwMax) * (bot - top);
   c.geo = { x, ys, W, H, socTop: top, kwBot: bot, from: tl.from, to: tl.to, M };
   const line = (segs, y) => segs.map((s) => `M${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}`).join("");
@@ -772,7 +799,18 @@ function togglePlay() {
   renderGauges();
   requestAnimationFrame(frame);
 }
-function showSpeed() { for (const b of document.querySelectorAll(".js-speed button")) b.classList.toggle("on", Number(b.dataset.speed) === speed); }
+function showSpeed() {
+  for (const b of document.querySelectorAll(".js-speed button")) b.classList.toggle("on", Number(b.dataset.speed) === speed);
+  for (const el of document.querySelectorAll(".js-speed-label")) el.textContent = `${speed}×`;
+  for (const m of document.querySelectorAll(".pill-menu")) m.hidden = true;
+}
+for (const el of document.querySelectorAll(".js-pill-play")) el.addEventListener("click", togglePlay);
+for (const el of document.querySelectorAll(".pill-speed")) el.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const menu = el.parentElement.querySelector(".pill-menu");
+  menu.hidden = !menu.hidden;
+});
+document.addEventListener("click", (e) => { if (!e.target.closest(".pill-menu")) for (const m of document.querySelectorAll(".pill-menu")) m.hidden = true; });
 for (const el of document.querySelectorAll(".js-play")) el.addEventListener("click", togglePlay);
 for (const el of document.querySelectorAll(".js-speed")) el.addEventListener("click", (e) => {
   const b = e.target.closest("button[data-speed]");
@@ -801,6 +839,26 @@ function unpin(card) {
   card.classList.remove("pinned");
   for (const k of ["top", "left", "right", "borderRadius", "boxShadow", "paddingLeft", "paddingRight", "paddingBottom"]) card.style[k] = "";
   card.querySelector(".tl-foot").style.cssText = "";
+  const bar = card.querySelector(".tl-bar"), full = bar.querySelector(".tl-full"), pill = bar.querySelector(".tl-pill");
+  bar.style.cssText = ""; full.style.cssText = ""; pill.style.cssText = ""; pill.hidden = true;
+  barH = null;
+}
+let barH = null;   // the controls bar's height when the card pinned
+/* The controls fold into the pill over the middle of the shrink: the full row fades
+   out over its first half, the pill fades in over its second, and the bar's height
+   eases from full to 26 px in step, so nothing below it jumps. */
+function morphBar(card, p) {
+  const bar = card.querySelector(".tl-bar"), full = bar.querySelector(".tl-full"), pill = bar.querySelector(".tl-pill");
+  if (barH == null) barH = bar.offsetHeight;
+  const k = Math.max(0, Math.min(1, (p - 0.15) / 0.7)), t = k * k * (3 - 2 * k);
+  Object.assign(bar.style, { height: `${barH + (26 - barH) * t}px`, paddingTop: `${10 - 6 * t}px`, flexWrap: "nowrap" });
+  if (t < 0.5) {
+    full.style.display = ""; full.style.opacity = String(1 - t * 2); pill.hidden = true;
+  } else {
+    const u = (t - 0.5) * 2;
+    full.style.display = "none"; pill.hidden = false;
+    Object.assign(pill.style, { opacity: String(u), transform: `scale(${(0.92 + 0.08 * u).toFixed(3)})` });
+  }
 }
 function updatePin() {
   const hdr = document.querySelector("body > header").offsetHeight;
@@ -833,6 +891,7 @@ function updatePin() {
   });
   Object.assign(foot.style, { height: `${(footH || 0) * (1 - p)}px`, opacity: String(1 - p),
     paddingTop: `${6 * (1 - p)}px`, paddingBottom: `${12 * (1 - p)}px` });
+  morphBar(card, p);
   if (h !== c.h) { c.h = h; drawChart(c, h); drawPlayhead(); }
 }
 window.addEventListener("scroll", placeMini, { passive: true });
