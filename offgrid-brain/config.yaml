@@ -1,6 +1,6 @@
 # Home Assistant add-on manifest. Installs into a supervised HAOS instance.
 name: Off-Grid Brain
-version: "0.11.1"
+version: "0.12.0"
 slug: offgrid_brain
 description: >-
   Load-shedding and dispatch brain for an off-grid solar + battery house. Walks
@@ -28,11 +28,8 @@ map:
 services:
   - mqtt:want
 
-# Since 0.9.0 the brain is configured from its web panel (Settings tab); the
-# options below the mqtt/cloudflare_access blocks are only read ONCE, to seed
-# /config/settings.json on first start, and will be removed in a later release.
-# They stay for now because the Supervisor drops option keys missing from the
-# schema before the add-on starts, which would lose an existing install's config.
+# The brain is configured from its web panel (Settings tab). These options hold
+# only the log level and secrets, which are never served to the web panel.
 options:
   log_level: info
   mqtt:
@@ -45,100 +42,9 @@ options:
   cloudflare_access:
     client_id: ""
     client_secret: ""
-  dry_run: true
-  tick_seconds: 5
-  sources:
-    battery_soc: ""
-    pv_power: ""
-    load_power: ""
-    outdoor_temp: ""
-    pv_forecast_today: ""
-    irradiance: ""
-  battery:
-    capacity_kwh: 51.8
-    inverter_kw: 7.5
-    max_charge_kw: 7.5
-    reserve_pct: 10
-  autonomy:
-    seed_load_kwh: 30
-    window_days: 7
-  splink:
-    enabled: false
-    urls: []
-    poll_seconds: 15
-    fast_seconds: 3
-    access_client_id: ""
-    access_client_secret: ""
-  ecowitt:
-    enabled: false
-    urls: []
-    poll_seconds: 10
-  solar:
-    inverter_ac_kw: 10
-  fronius:
-    enabled: false
-    hosts: []
-    poll_seconds: 10
-    publish_to_ha: false
-  devices: []
 
 schema:
-  # Master safety switch. true = decide and log, actuate NOTHING.
-  dry_run: bool
-  tick_seconds: int(2,300)
   log_level: list(debug|info|warn|error)
-  # Logical name -> HA entity_id. Every one optional; absent sources degrade safely.
-  sources:
-    battery_soc: str?
-    pv_power: str?
-    load_power: str?
-    outdoor_temp: str?
-    pv_forecast_today: str?
-    # Solar irradiance, W/m² (fallback when no Ecowitt gateway is polled directly).
-    irradiance: str?
-  battery:
-    capacity_kwh: float
-    inverter_kw: float
-    max_charge_kw: float
-    reserve_pct: int(0,50)
-  autonomy:
-    seed_load_kwh: float
-    window_days: int(1,30)
-  # SP PRO bridge (splink-cli JSON API): battery SoC, AC load and Fronius PV in one
-  # read. urls are tried in order — list the LAN address first and a tunnel second.
-  splink:
-    enabled: bool
-    urls:
-      - url
-    poll_seconds: int(5,300)
-    # The bridge's /fast window (SoC + load), re-read every few seconds for shedding.
-    # 0 turns it off; a bridge without /fast is detected and skipped automatically.
-    fast_seconds: int(0,60)
-    # Cloudflare Access service token, if the tunnel is behind Access.
-    access_client_id: str?
-    access_client_secret: password?
-  # Ecowitt gateway (GW1100/GW2000/GW3000) local API, for solar irradiance. List a
-  # gateway's Ethernet and Wi-Fi addresses to survive either link dropping.
-  ecowitt:
-    enabled: bool
-    urls:
-      - url
-    poll_seconds: int(5,300)
-  # Available-solar estimate: each AC-coupled inverter's AC ceiling, and an
-  # optional array size override (default: the inverter's configured PV peak).
-  solar:
-    inverter_ac_kw: float
-    kwp: float?
-  fronius:
-    enabled: bool
-    hosts:
-      - str
-    poll_seconds: int(5,300)
-    publish_to_ha: bool
-  # Cloudflare Access service token, if the SP PRO bridge's tunnel is behind Access.
-  cloudflare_access:
-    client_id: str?
-    client_secret: password?
   # Publishes the brain's state as an "Off-Grid Brain" device via MQTT discovery.
   # Leave host blank to use the Mosquitto add-on's own credentials.
   mqtt:
@@ -148,11 +54,8 @@ schema:
     port: port?
     username: str?
     password: password?
-  # Controllable loads. `id` must match a device id used in policy.json.
-  devices:
-    - id: str
-      name: str?
-      kw: float
-      switch: str?
-      power_sensor: str?
-      min_dwell_seconds: int?
+  # Cloudflare Access service token, sent when reading the SP PRO bridge through a
+  # tunnel that's protected by Cloudflare Access. Leave blank otherwise.
+  cloudflare_access:
+    client_id: str?
+    client_secret: password?

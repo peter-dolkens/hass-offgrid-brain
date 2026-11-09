@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.0
+- The add-on Configuration screen now holds only the log level, MQTT and the
+  Cloudflare Access token. Everything else is in the web panel's Settings tab.
+- The old option fields (kept since 0.9.0 so existing installs could copy them into
+  settings.json) are removed. If you're upgrading from before 0.9.0, install 0.11.x
+  first so your settings are copied, or re-enter them in Settings.
+
 ## 0.11.1
 - Settings: **Save settings** sits directly under the settings it saves, above the
   battery, inverter and load cards (each of which has its own Save).

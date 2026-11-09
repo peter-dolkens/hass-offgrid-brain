@@ -49,11 +49,11 @@ kept as `.bak`). Devices are edited in the same tab and stored with the dispatch
 list in `/config/policy.json`. The YAML below shows the same keys as they appear
 in `settings.json`.
 
-The add-on's own **Configuration** screen keeps only the log level and the secrets:
-the MQTT connection and the Cloudflare Access token. Before 0.9.0 everything lived
-there. On first start, 0.9.0 copies those options into `settings.json`, and device
-switches into `policy.json`, so an existing install keeps its setup. The old option
-fields are ignored after that and will be removed in a later release.
+The add-on's own **Configuration** screen holds only the log level and secrets:
+the MQTT connection, and a Cloudflare Access token for reading the SP PRO bridge
+through an Access-protected tunnel. Installs from before 0.9.0 had everything there;
+0.9.0–0.11 copied it into `settings.json` (and device switches into `policy.json`)
+on first start, and 0.12.0 removes the old fields.
 
 ### Battery and solar inverters
 
