@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.2
+- Live: "not needed" dispatch entries (condition is 0) are hidden by default too,
+  alongside "already served". One button under the list shows both.
+
 ## 0.15.1
 - Live: dispatch entries that an earlier entry already served are hidden by
   default. A button under the list shows them; entry numbers stay as in the policy.

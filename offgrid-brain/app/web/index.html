@@ -307,7 +307,7 @@ function renderRow(t) {
     <div><span class="chip ${t.outcome}">${OUTCOME[t.outcome] || t.outcome}</span></div></div>`;
 }
 
-let showServed = false;
+let showQuiet = false;
 function renderLive() {
   const s = state;
   $("mode").className = `badge ${s.dryRun ? "dry" : "live"}`;
@@ -326,12 +326,16 @@ function renderLive() {
   $("banners").innerHTML = banners.join("");
 
   renderGauges();
-  // Entries an earlier one already served change nothing, so they're hidden unless asked for.
-  const served = s.result.trace.filter((t) => t.outcome === "already-served").length;
-  const rows = showServed ? s.result.trace : s.result.trace.filter((t) => t.outcome !== "already-served");
-  $("list").innerHTML = rows.length ? rows.map(renderRow).join("") : '<div class="empty">The list is empty.</div>';
-  $("served-bar").hidden = !served;
-  $("served-toggle").textContent = showServed ? `Hide ${served} already served` : `Show ${served} already served`;
+  // Entries that aren't asking to run, or that an earlier entry already served,
+  // change nothing, so they're hidden unless asked for.
+  const quiet = (t) => t.outcome === "already-served" || t.outcome === "idle";
+  const count = (o) => s.result.trace.filter((t) => t.outcome === o).length;
+  const hidden = [[count("idle"), "not needed"], [count("already-served"), "already served"]].filter(([k]) => k);
+  const rows = showQuiet ? s.result.trace : s.result.trace.filter((t) => !quiet(t));
+  $("list").innerHTML = rows.length ? rows.map(renderRow).join("")
+    : `<div class="empty">${s.result.trace.length ? "Nothing in the list is asking to run." : "The list is empty."}</div>`;
+  $("served-bar").hidden = !hidden.length;
+  $("served-toggle").textContent = `${showQuiet ? "Hide" : "Show"} ${hidden.map(([k, l]) => `${k} ${l}`).join(" and ")}`;
   $("vars").innerHTML = Object.entries(s.ctx).map(([k, v]) =>
     `<span>${k}=${typeof v === "number" ? (Number.isInteger(v) ? v : v.toFixed(2)) : esc(v)}</span>`).join("");
 }
@@ -604,7 +608,7 @@ $("tl-play").addEventListener("click", () => {
   playing = true; lastFrame = 0;
   requestAnimationFrame(frame);
 });
-$("served-toggle").addEventListener("click", () => { showServed = !showServed; renderLive(); });
+$("served-toggle").addEventListener("click", () => { showQuiet = !showQuiet; renderLive(); });
 $("tl-now").addEventListener("click", () => { playing = false; view = null; renderGauges(); drawPlayhead(); });
 
 async function refreshTimeline() {
