@@ -115,6 +115,9 @@
   .dtile label { font-size: 12px; font-weight: 600; color: var(--muted); display: block; margin-bottom: 2px; }
   .dtile input, .dtile select { width: 100%; font: inherit; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--text); }
   .dtile .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .dtile .rating { display: grid; grid-template-columns: 1fr auto 1fr auto auto; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .dtile .rating span { font-size: 12px; color: var(--muted); }
+  .dtile .rating select { width: auto; }
   .dtile .hint { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .dtile .now { font-size: 12px; font-family: var(--mono); color: var(--muted); border-top: 1px solid var(--line); padding-top: 8px; }
   .dtile.add { align-items: center; justify-content: center; border-style: dashed; cursor: pointer; color: var(--muted); font-weight: 600; min-height: 120px; }
@@ -168,7 +171,7 @@
       <div class="panel"><h3>Battery <span class="when" id="g-when-b"></span></h3><div id="g-batt"></div>
         <div class="legend"><span><i style="background:var(--batt)"></i>charge / charging</span><span><i style="background:var(--load)"></i>discharging</span><span><i style="background:var(--floor)"></i>floors</span></div></div>
       <div class="panel"><h3>Load and solar <span class="when" id="g-when-l"></span></h3><div id="g-load"></div>
-        <div class="legend"><span><i style="background:var(--load)"></i>load</span><span><i style="background:var(--solar-av)"></i>solar available</span><span><i style="background:var(--surge)"></i>above continuous</span></div>
+        <div class="legend"><span><i style="background:var(--load)"></i>load</span><span><i style="background:var(--solar-av)"></i>solar available</span><span><i style="background:var(--surge)"></i>above continuous (darker = shorter)</span></div>
         <div class="sub" id="g-arrays"></div></div>
       <div class="panel"><h3>Loads <span class="when" id="g-when-d"></span></h3><div id="g-loads"></div></div>
     </div>
@@ -432,27 +435,43 @@ function batteryGauge(m) {
   </svg>`;
 }
 
+const durText = (sec) => (sec >= 3600 && sec % 3600 === 0 ? `${sec / 3600} h` : sec >= 60 && sec % 60 === 0 ? `${sec / 60} min` : `${sec} s`);
 function loadGauge(m) {
   const b = state.battery, START = -135, SPAN = 270;
-  const marks = [[b.inverter_kw, `${b.inverter_kw}`], [b.surge_kw, `${b.surge_kw}`], [b.peak_kw, `${b.peak_kw}`]].filter(([v]) => v > 0);
-  const MAX = b.peak_kw || b.surge_kw || b.inverter_kw * 1.5;
-  marks[marks.length - 1][1] += " kW";
+  // Continuous, then each short-term rating: higher kW for less time.
+  const ratings = (b.ratings || []).filter((r) => r.kw > b.inverter_kw && r.seconds > 0).sort((a, z) => a.kw - z.kw);
+  const MAX = ratings.length ? ratings[ratings.length - 1].kw : b.inverter_kw * 1.5;
   const ang = (v) => START + SPAN * Math.max(0, Math.min(1, v / MAX));
   const avail = Number.isFinite(m.availKw) ? Math.max(m.availKw, n(m.pvKw) || 0) : n(m.pvKw);
   const unused = avail - (n(m.pvKw) || 0);
   const foot = !Number.isFinite(avail) ? "no solar reading" : avail < 0.05 ? "no sun" : unused > 0.3 ? `${kw(unused)} of sun unused` : "using all the sun";
+  // The band above continuous darkens as the time allowed gets shorter.
+  let lo = b.inverter_kw;
+  const bands = ratings.map((r, i) => { const d = `<path d="${arcPath(100, 95, 78, ang(lo), ang(r.kw))}" stroke="var(--surge)" stroke-width="14" fill="none" opacity="${(0.45 + (0.55 * (i + 1)) / ratings.length).toFixed(2)}"/>`; lo = r.kw; return d; }).join("");
+  const marks = [{ kw: b.inverter_kw, title: `${b.inverter_kw} kW continuous` }, ...ratings.map((r) => ({ kw: r.kw, title: `${r.kw} kW for ${durText(r.seconds)}` }))];
+  let lastLabel = -999;
+  const ticks = marks.map((mk, i) => {
+    const deg = ang(mk.kw), a = (deg * Math.PI) / 180, last = i === marks.length - 1;
+    const label = deg - lastLabel >= 12 || last;   // skip a label that would collide
+    if (label) lastLabel = deg;
+    return `<g><title>${mk.title}</title><line x1="${100 + 68 * Math.sin(a)}" y1="${95 - 68 * Math.cos(a)}" x2="${100 + 90 * Math.sin(a)}" y2="${95 - 90 * Math.cos(a)}" stroke="var(--floor)" stroke-width="1.5"/>`
+      + (label ? txt(100 + 102 * Math.sin(a), 95 - 102 * Math.cos(a) + 4, `${+mk.kw.toFixed(2)}${last ? " kW" : ""}`, { size: 9, fill: "var(--muted)", mono: true }) : "") + "</g>";
+  }).join("");
+  let warn = "";
+  if (m.loadKw > b.inverter_kw) {
+    const fits = ratings.find((r) => r.kw >= m.loadKw);
+    warn = fits ? `above continuous: allowed for ${durText(fits.seconds)}` : `over the ${MAX} kW limit`;
+  }
   return `<svg viewBox="0 0 200 190" role="img" aria-label="Load ${kw(m.loadKw)}, solar ${kw(m.pvKw)} of ${kw(avail)}">
     <path d="${arcPath(100, 95, 78, START, START + SPAN)}" stroke="var(--track)" stroke-width="14" fill="none" stroke-linecap="round"/>
-    <path d="${arcPath(100, 95, 78, ang(b.inverter_kw), START + SPAN)}" stroke="var(--surge)" stroke-width="14" fill="none"/>
+    ${bands}
     ${avail > 0.01 ? `<path d="${arcPath(100, 95, 78, START, ang(Math.min(avail, MAX)))}" stroke="var(--solar-av)" stroke-width="14" fill="none" stroke-linecap="round"/>` : ""}
     ${Number.isFinite(m.loadKw) ? `<path d="${arcPath(100, 95, 78, START, Math.max(START + 1.5, ang(m.loadKw)))}" stroke="var(--load)" stroke-width="6" fill="none" stroke-linecap="round"/>` : ""}
-    ${marks.map(([v, l]) => { const a = (ang(v) * Math.PI) / 180;
-      return `<line x1="${100 + 68 * Math.sin(a)}" y1="${95 - 68 * Math.cos(a)}" x2="${100 + 90 * Math.sin(a)}" y2="${95 - 90 * Math.cos(a)}" stroke="var(--floor)" stroke-width="1.5"/>`
-        + txt(100 + 102 * Math.sin(a), 95 - 102 * Math.cos(a) + 4, l, { size: 9, fill: "var(--muted)", mono: true }); }).join("")}
+    ${ticks}
     ${txt(100, 92, kw(m.loadKw), { size: 26, w: 700 })}
     ${txt(100, 112, `solar ${kw(m.pvKw)} of ${kw(avail)}`, { size: 11.5, fill: "var(--muted)" })}
     ${txt(100, 168, foot, { size: 11.5, w: 600 })}
-    ${m.loadKw > b.inverter_kw ? txt(100, 184, `over the ${b.inverter_kw} kW continuous rating`, { size: 10.5, fill: "var(--bad)", w: 600 }) : ""}
+    ${warn ? txt(100, 184, warn, { size: 10.5, fill: "var(--bad)", w: 600 }) : ""}
   </svg>`;
 }
 
@@ -876,10 +895,29 @@ function renderBattery() {
     ${fields}
     <div class="row2">${field("Capacity (kWh)", numHtml("capacity_kwh", b.capacity_kwh))}${field("Reserve (%)", numHtml("reserve_pct", b.reserve_pct), "Nothing may discharge below this.")}</div>
     <div class="row2">${field("Inverter (kW)", numHtml("inverter_kw", b.inverter_kw), "Continuous rating.")}${field("Max charge (kW)", numHtml("max_charge_kw", b.max_charge_kw))}</div>
-    <div class="row2">${field("Surge (kW)", numHtml("surge_kw", b.surge_kw, "optional"), "About 30 minutes.")}${field("Peak (kW)", numHtml("peak_kw", b.peak_kw, "optional"), "About 60 seconds.")}</div>
+    <div><label>Short-term ratings</label>
+      ${(b.ratings || []).map((r, i) => { const min = r.seconds >= 60 && r.seconds % 60 === 0;
+        return `<div class="rating"><input data-r="${i}" data-f="kw" type="number" step="any" value="${r.kw == null ? "" : esc(r.kw)}" placeholder="kW"><span>kW for</span>
+          <input data-r="${i}" data-f="dur" type="number" step="any" value="${r.seconds == null ? "" : min ? r.seconds / 60 : r.seconds}">
+          <select data-r="${i}" data-f="unit">${opts([["s", "s"], ["min", "min"]], min ? "min" : "s")}</select>
+          <button class="btn" data-r="${i}" data-f="del" title="Remove">✕</button></div>`; }).join("")}
+      <button class="btn" id="rating-add">Add rating</button>
+      <div class="hint">What the inverter can deliver above its continuous rating, and for how long. Marked on the Live load gauge.</div></div>
     <div class="now">${soc && Number.isFinite(soc.value) ? `now ${fmt(soc.value)}% · ${esc(soc.from)} · ${agoEl(soc.ageSec)}` : "no SoC reading"}</div>
   </div>`;
   bindTile($("batt-el"), b, renderBattery);
+  const rowOf = (i) => [...$("batt-el").querySelectorAll(`[data-r="${i}"]`)].reduce((o, el) => ({ ...o, [el.dataset.f]: el }), {});
+  const readRating = (i) => {
+    const r = rowOf(i), dur = r.dur.value.trim();
+    b.ratings[i] = { kw: r.kw.value.trim() === "" ? null : Number(r.kw.value),
+      seconds: dur === "" ? null : Math.round(Number(dur) * (r.unit.value === "min" ? 60 : 1)) };
+  };
+  for (const el of $("batt-el").querySelectorAll("[data-r]")) {
+    const i = Number(el.dataset.r);
+    if (el.dataset.f === "del") el.addEventListener("click", () => { b.ratings.splice(i, 1); renderBattery(); });
+    else el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => readRating(i));
+  }
+  $("rating-add").addEventListener("click", () => { b.ratings = [...(b.ratings || []), { kw: null, seconds: null }]; renderBattery(); });
 }
 
 function renderInverters() {
@@ -958,7 +996,7 @@ async function saveInverters() {
 }
 
 function loadTiles() {
-  battModel = { ...settingsSaved.battery };
+  battModel = { ...settingsSaved.battery, ratings: (settingsSaved.battery.ratings || []).map((r) => ({ ...r })) };
   invModel = ((settingsSaved.solar && settingsSaved.solar.inverters) || []).map((x) => ({ ...x }));
   renderBattery();
   renderInverters();

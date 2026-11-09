@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.16.0
+- Battery settings: the fixed **Surge** and **Peak** fields are replaced by a list
+  of **short-term ratings** (kW for a duration), so an inverter with several, like
+  the SP PRO's 8 kW/60 min, 11.25 kW/30 min, 13 kW/60 s and 18 kW/30 s, can be
+  entered in full. Existing surge/peak values are converted automatically.
+- The Live load gauge marks every rating, shades the band above continuous darker
+  as the allowed time gets shorter, and says how long a load above continuous may
+  run.
+
 ## 0.15.5
 - The timeline's projection includes the battery inverter's own draw, on top of
   the AC load. The brain learns it from its recording: the median of battery

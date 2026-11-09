@@ -346,7 +346,6 @@ async function main() {
       },
       ctx,
       result: summarise(result),
-      limits: { surgeKw: battery.surge_kw, peakKw: battery.peak_kw },
       devices: policy.devices.map((d) => ({ id: d.id, name: d.name, switch: d.switch || null })),
     };
 

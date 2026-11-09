@@ -182,4 +182,23 @@ t("settings routes: save applies; going live needs explicit confirmation", async
   } finally { server.close(); }
 });
 
+t("battery: 0.15 surge/peak become short-term ratings, once", () => {
+  const s = Settings.normalise({ splink: { enabled: true, urls: ["https://x/"] }, battery: { source: "bridge", surge_kw: 11, peak_kw: 13 } });
+  assert.deepStrictEqual(s.battery.ratings, [{ kw: 11, seconds: 1800 }, { kw: 13, seconds: 60 }]);
+  assert.ok(!("surge_kw" in s.battery) && !("peak_kw" in s.battery));
+  assert.deepStrictEqual(Settings.normalise(s).battery.ratings, s.battery.ratings);
+  assert.deepStrictEqual(Settings.check(s), []);
+});
+
+t("battery: short-term ratings validate against continuous and each other", () => {
+  const s = Settings.normalise({});
+  s.battery.ratings = [{ kw: 18, seconds: 30 }, { kw: 13, seconds: 60 }, { kw: 11.25, seconds: 1800 }, { kw: 8, seconds: 3600 }];
+  assert.deepStrictEqual(Settings.check(s), []);
+  s.battery.ratings = [{ kw: 7, seconds: 60 }, { kw: 9, seconds: null }, { kw: 10, seconds: 600 }, { kw: 12, seconds: 1200 }];
+  const p = Settings.check(s).join(" | ");
+  for (const want of ["7 kW must be above the 7.5 kW continuous", "9 kW needs a duration", "a longer duration must have a lower kW"]) {
+    assert.ok(p.includes(want), `${want}: ${p}`);
+  }
+});
+
 Promise.all(results).then(() => console.log(`\n${pass} passed`));

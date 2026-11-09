@@ -38,7 +38,8 @@ The add-on adds **Off-Grid Brain** to the Home Assistant sidebar (Ingress, admin
   - **Battery:** a ring with each charge rung's floor and the reserve, the
     charge/discharge rate as an inner arc, and when it reaches full or the next floor.
   - **Load and solar:** the load against solar available and the battery inverter's
-    continuous, surge and peak ratings.
+    continuous and short-term ratings. The band above continuous darkens as the
+    time allowed gets shorter, and a load above continuous says how long it may run.
   - **Loads:** which are running and which are shed.
 
   Below them is the dispatch list exactly as the last tick walked it: each entry's
@@ -218,8 +219,10 @@ but never actuates it. Use that for anything not yet wired.
 
 `capacity_kwh`, `inverter_kw` (the battery inverter's continuous rating),
 `max_charge_kw`, `reserve_pct` (the floor nothing may discharge below), and
-optionally `surge_kw` (about 30 minutes) and `peak_kw` (about 60 seconds), which
-are marked on the Live load gauge. An SP PRO 7.5 is 7.5 / 11 / 13 kW.
+optionally `ratings`, the short-term ratings above continuous as
+`[{ "kw": 8, "seconds": 3600 }, ...]`, which are marked on the Live load gauge. A
+longer duration must have a lower kW. An SP PRO 7.5 is 7.5 kW continuous, 8 kW for
+60 min, 11.25 kW for 30 min, 13 kW for 60 s and 18 kW for 30 s.
 
 ### Fronius inverters
 

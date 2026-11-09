@@ -23,9 +23,10 @@ const DEFAULTS = Object.freeze({
     name: "Battery", source: "none",
     soc_entity: "", power_entity: "", load_entity: "", energy_in_entity: "", energy_out_entity: "",
     capacity_kwh: 51.8, inverter_kw: 7.5, max_charge_kw: 7.5, reserve_pct: 10,
-    // Short-term ratings above the continuous one, shown on the Live load gauge.
-    surge_kw: null,   // ~30 minutes
-    peak_kw: null,    // ~60 seconds
+    // Short-term ratings above the continuous one: [{ kw, seconds }], e.g. an SP PRO
+    // 7.5 does 8 kW for 60 min, 11.25 for 30 min, 13 for 60 s and 18 for 30 s.
+    // Marked on the Live load gauge.
+    ratings: [],
   },
   autonomy: { seed_load_kwh: 30, window_days: 7 },
   // Readings that don't belong to the battery or an inverter.
@@ -72,6 +73,14 @@ function upgradeBattery(out, from) {
                                energy_entity: "", ac_kw: null, kwp: null });
   }
   for (const k of ["battery_soc", "load_power", "pv_power"]) delete out.sources[k];
+  // 0.15.0-0.15.5 had two fixed short-term ratings.
+  if ("surge_kw" in b || "peak_kw" in b) {
+    if (!(from.battery && Array.isArray(from.battery.ratings) && from.battery.ratings.length)) {
+      b.ratings = [[b.surge_kw, 1800], [b.peak_kw, 60]].filter(([kw]) => kw > 0).map(([kw, seconds]) => ({ kw, seconds }));
+    }
+    delete b.surge_kw; delete b.peak_kw;
+  }
+  b.ratings = (Array.isArray(b.ratings) ? b.ratings : []).map((r) => ({ kw: r && r.kw, seconds: r && r.seconds }));
 }
 
 /** Older shapes of the inverter list, converted without needing live data:
@@ -129,8 +138,15 @@ function check(s) {
   if (!num(b.capacity_kwh, 0.1, 10000)) p.push("battery capacity must be a positive kWh");
   if (!num(b.inverter_kw, 0.1, 1000)) p.push("battery inverter kW must be positive");
   if (!num(b.max_charge_kw, 0.1, 1000)) p.push("max charge kW must be positive");
-  if (b.surge_kw != null && !num(b.surge_kw, b.inverter_kw, 1000)) p.push("surge kW must be at least the continuous rating");
-  if (b.peak_kw != null && !num(b.peak_kw, b.surge_kw != null ? b.surge_kw : b.inverter_kw, 1000)) p.push("peak kW must be at least the surge rating");
+  const ratings = Array.isArray(b.ratings) ? b.ratings : [];
+  for (const r of ratings) {
+    if (!num(r.kw, 0, 1000) || !(r.kw > b.inverter_kw)) p.push(`short-term rating ${r.kw} kW must be above the ${b.inverter_kw} kW continuous rating`);
+    if (!num(r.seconds, 1, 86400)) p.push(`short-term rating ${r.kw} kW needs a duration of 1 s to 24 h`);
+  }
+  const bySec = ratings.filter((r) => num(r.kw, 0, 1000) && num(r.seconds, 1, 86400)).sort((a, z) => a.seconds - z.seconds);
+  for (let i = 1; i < bySec.length; i++) {
+    if (!(bySec[i].kw < bySec[i - 1].kw)) p.push("short-term ratings: a longer duration must have a lower kW");
+  }
   if (!num(b.reserve_pct, 0, 50)) p.push("reserve must be 0-50%");
   const a = s.autonomy || {};
   if (!num(a.seed_load_kwh, 0, 10000)) p.push("autonomy seed load must be >= 0 kWh");
