@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.2
+- Live: the Loads panel shows the shed count only when something is shed, as it
+  already did for held back.
+
 ## 0.21.1
 - Live: the timeline's own controls now fold into the pill as it shrinks, instead
   of being swapped for a copy. "Replay" slides away to leave ▶, the unselected

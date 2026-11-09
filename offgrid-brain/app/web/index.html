@@ -586,7 +586,7 @@ function loadsPanel(m) {
     const st = shed.has(d.id) ? ["shed", "shed"] : run.has(d.id) ? ["granted", "running"] : held.has(d.id) ? ["held", "held back"] : ["idle", "not needed"];
     return `<div class="ld"><span>${esc(d.name || d.id)}</span><span class="chip ${st[0]}">${st[1]}</span></div>`;
   }).join("");
-  return `<div class="counts"><span class="chip granted">${run.size} running</span><span class="chip ${shed.size ? "shed" : "idle"}">${shed.size} shed</span>
+  return `<div class="counts"><span class="chip granted">${run.size} running</span>${shed.size ? `<span class="chip shed">${shed.size} shed</span>` : ""}
       ${held.size ? `<span class="chip held">${held.size} held back</span>` : ""}
       <span class="chip idle">${Math.max(0, devs.length - run.size - shed.size - held.size)} not needed</span></div>
     <div class="loads">${rows || '<div class="muted">No loads in the policy.</div>'}</div>`;
