@@ -1,0 +1,32 @@
+{
+  "_comment": [
+    "Starter dispatch policy, modelled on an off-grid site still under construction:",
+    "the only permanent loads are the comms gear and the system's own parasitic.",
+    "Builder loads are transient and unswitched, so they are an advisory device with",
+    "no switch. Replace it with your own devices and list.",
+    "",
+    "Grow this toward the simulator's defaults as circuits are energised.",
+    "",
+    "Calibration for the original site (Selectronic portal, 4 days):",
+    "  standby 0.108 kW = the stable Solar Generation MINUS Energy Usage gap (~2.5 kWh/d),",
+    "    which is upstream of the load meter and never appears in Energy Usage.",
+    "  network 0.05 kW ~= the 1.2 kWh/d measured on 09-30 (router + switch + PoE + select.live2).",
+    "  builders: the 09-30 -> 10-01 step was ~1.4 kWh/d. Modelled as a 1 kW nameplate at a 0.17",
+    "    duty factor over a 9 h working day = ~1.5 kWh/d, rather than 1 kW continuous.",
+    "Entry semantics are identical to the simulator: charge rungs set a discharge",
+    "FLOOR for everything below them, and a device may appear several times to give",
+    "progressive service levels."
+  ],
+  "devices": [
+    { "id": "standby", "name": "Inverter + battery standby", "kw": 0.108 },
+    { "id": "network", "name": "Router / switch / PoE / select.live", "kw": 0.05 },
+    { "id": "builders", "name": "Builder loads (transient, unswitched)", "kw": 1.0 }
+  ],
+  "list": [
+    { "type": "load", "dev": "standby", "cond": "1", "gen": true },
+    { "type": "load", "dev": "network", "cond": "1", "gen": true },
+    { "type": "charge", "to": 20 },
+    { "type": "load", "dev": "builders", "cond": "hour>=7 and hour<16 ? 0.17 : 0" },
+    { "type": "charge", "to": 100 }
+  ]
+}

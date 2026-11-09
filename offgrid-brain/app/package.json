@@ -1,0 +1,10 @@
+{
+  "name": "offgrid-brain",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Load-shedding dispatch brain for an off-grid house (Home Assistant add-on)",
+  "main": "main.js",
+  "scripts": { "start": "node main.js", "test": "node test/dispatch.test.js && node test/splink.test.js && node test/engine-sync.test.js" },
+  "//": "ws is NOT needed — Node 22 has a global WebSocket. mqtt is optional (bridge only).",
+  "optionalDependencies": { "mqtt": "^5.10.1" }
+}

@@ -1,0 +1,190 @@
+{
+  "sp_pro": {
+    "taken_at": "2026-11-09T19:50:27.1055761+11:00",
+    "live_read_at": "2026-11-09T19:50:07.2147142+11:00",
+    "healthy": true,
+    "unit": {
+      "model": "SPMC482",
+      "description": "48V DC, 7.5kW, 240V AC",
+      "serial": 100000,
+      "hardware_revision": 25
+    },
+    "inverter_clock": "2026-11-09T18:22:04.93",
+    "inverter_clock_read_at": "2026-11-09T19:24:37.9094474+11:00",
+    "inverter_clock_drift_seconds": -3753,
+    "host_clock": {
+      "synchronized": true,
+      "source": "systemd-timesyncd",
+      "server": "2.debian.pool.ntp.org",
+      "stratum": 2,
+      "offset_seconds": 0.008412000000000001,
+      "root_distance_seconds": 0.08267100000000001,
+      "poll_interval_seconds": 2048,
+      "checked_at": "2026-11-09T19:49:34.1081991+11:00"
+    },
+    "battery": {
+      "soc_percent": 99.898,
+      "volts": 54.72,
+      "amps": -1.95,
+      "kilowatts": -0.107
+    },
+    "ac": {
+      "load_kilowatts": 0.076,
+      "volts": 240,
+      "frequency_hz": 50
+    },
+    "dc": {
+      "amps": 1.95
+    },
+    "charger": "Long Term Float",
+    "generator": {
+      "status": "Disabled",
+      "reason": "Disabled",
+      "kilowatts": 0,
+      "kilowatts_5min_avg": 0,
+      "volts": 0.5,
+      "amps": 0,
+      "frequency_hz": 0,
+      "max_available_input_kilowatts": 0
+    },
+    "ac_coupled": {
+      "kilowatts": 0,
+      "percent": 1.5,
+      "per_inverter": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "inverter": {
+      "kilowatts": -0.077,
+      "amps": -1.14,
+      "mode": "On",
+      "ac_source_status": "AC Source Not Present"
+    },
+    "battery_trend": {
+      "load_5min_kilowatts": 0.062,
+      "load_15min_kilowatts": 0.051
+    },
+    "shunts": {
+      "shunt1_amps": 0,
+      "shunt2_amps": 0,
+      "shunt1_kilowatts": 0,
+      "shunt2_kilowatts": 0
+    },
+    "regulation": {
+      "active_schedule": 0,
+      "input_power_limit_kilowatts": 3.203,
+      "export_power_limit_kilowatts": 0,
+      "charge_power_limit_kilowatts": 8.998,
+      "support_power_limit_kilowatts": 9.002,
+      "charger_status": "Not locked out",
+      "inverter_lockout": "Not locked out",
+      "source_disconnect": "Not locked out"
+    },
+    "today_read_at": "2026-11-09T19:46:25.9193784+11:00",
+    "today": {
+      "dc_input_kwh": 2.707,
+      "dc_output_kwh": 1.107,
+      "dc_net_kwh": 1.477,
+      "inverter_dc_kwh": 3.814,
+      "battery_in_kwh": 1.354,
+      "battery_out_kwh": 0.615,
+      "ac_load_kwh": 0.456,
+      "ac_input_kwh": 0,
+      "ac_export_kwh": 0,
+      "ac_coupled_kwh": 2.506,
+      "ac_coupled_kwh_per_inverter": [
+        0,
+        0
+      ],
+      "ac_coupled_peak_kilowatts": 2.748,
+      "shunt1_kwh": 0,
+      "shunt2_kwh": 0,
+      "shunt1_peak_kilowatts": 0,
+      "shunt2_peak_kilowatts": 0,
+      "float_hours": 18.73,
+      "ac_input_hours": 0,
+      "inverter_run_hours": 18.73
+    }
+  },
+  "fronius": [
+    {
+      "name": "right",
+      "host": "192.168.1.21",
+      "custom_name": "Solar Inverter (Right)",
+      "rated_watts": 14725,
+      "healthy": true,
+      "taken_at": "2026-11-09T19:50:27.20761+11:00",
+      "ac": {
+        "power_watts": 0,
+        "apparent_va": 0,
+        "volts": 240.6,
+        "amps": 0
+      },
+      "energy": {
+        "total_wh": 102425.8
+      },
+      "strings": [
+        {
+          "index": 1,
+          "volts": 70.6,
+          "amps": 0,
+          "watts": 0
+        },
+        {
+          "index": 2,
+          "volts": 69,
+          "amps": 0,
+          "watts": 0
+        }
+      ],
+      "status": {
+        "state": "Sleeping",
+        "status_code": 13,
+        "error_code": 1175,
+        "device_time": "2026-11-09T08:50:27+00:00"
+      }
+    },
+    {
+      "name": "left",
+      "host": "192.168.1.22",
+      "custom_name": "Solar Inverter (Left)",
+      "rated_watts": 14725,
+      "healthy": true,
+      "taken_at": "2026-11-09T19:50:27.2203604+11:00",
+      "ac": {
+        "power_watts": 0,
+        "apparent_va": 0,
+        "volts": 240.6,
+        "amps": 0
+      },
+      "energy": {
+        "total_wh": 100115.5
+      },
+      "strings": [
+        {
+          "index": 1,
+          "volts": 133.6,
+          "amps": 0,
+          "watts": 0
+        },
+        {
+          "index": 2,
+          "volts": 133.9,
+          "amps": 0,
+          "watts": 0
+        }
+      ],
+      "status": {
+        "state": "Sleeping",
+        "status_code": 13,
+        "error_code": 1175,
+        "device_time": "2026-11-09T08:50:27+00:00"
+      }
+    }
+  ],
+  "solar_total_watts": 0
+}

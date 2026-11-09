@@ -1,0 +1,105 @@
+# Home Assistant add-on manifest. Installs into a supervised HAOS instance.
+name: Off-Grid Brain
+version: "0.2.0"
+slug: offgrid_brain
+description: >-
+  Load-shedding and dispatch brain for an off-grid solar + battery house. Walks
+  one dispatch list of charge rungs and loads every tick, reading battery SoC from
+  an SP PRO bridge or any Home Assistant entity, and fails austere when it can't.
+url: https://github.com/peter-dolkens/hass-offgrid-brain
+arch:
+  - aarch64
+  - amd64
+  - armv7
+init: false
+# WebSocket + REST access to HA core (read states, call services).
+homeassistant_api: true
+hassio_api: true
+# Own config dir at /config — holds policy.json (the dispatch list).
+map:
+  - addon_config:rw
+# Optional: only needed when mqtt.enabled is true.
+services:
+  - mqtt:want
+
+options:
+  dry_run: true
+  tick_seconds: 30
+  log_level: info
+  sources:
+    battery_soc: ""
+    pv_power: ""
+    load_power: ""
+    outdoor_temp: ""
+    pv_forecast_today: ""
+  battery:
+    capacity_kwh: 51.8
+    inverter_kw: 7.5
+    max_charge_kw: 7.5
+    reserve_pct: 10
+  autonomy:
+    seed_load_kwh: 30
+    window_days: 7
+  splink:
+    enabled: false
+    urls: []
+    poll_seconds: 15
+    access_client_id: ""
+    access_client_secret: ""
+  fronius:
+    enabled: false
+    hosts: []
+    poll_seconds: 10
+    publish_to_ha: false
+  mqtt:
+    enabled: false
+    discovery_prefix: homeassistant
+  devices: []
+
+schema:
+  # Master safety switch. true = decide and log, actuate NOTHING.
+  dry_run: bool
+  tick_seconds: int(5,300)
+  log_level: list(debug|info|warn|error)
+  # Logical name -> HA entity_id. Every one optional; absent sources degrade safely.
+  sources:
+    battery_soc: str?
+    pv_power: str?
+    load_power: str?
+    outdoor_temp: str?
+    pv_forecast_today: str?
+  battery:
+    capacity_kwh: float
+    inverter_kw: float
+    max_charge_kw: float
+    reserve_pct: int(0,50)
+  autonomy:
+    seed_load_kwh: float
+    window_days: int(1,30)
+  # SP PRO bridge (splink-cli JSON API): battery SoC, AC load and Fronius PV in one
+  # read. urls are tried in order — list the LAN address first and a tunnel second.
+  splink:
+    enabled: bool
+    urls:
+      - url
+    poll_seconds: int(5,300)
+    # Cloudflare Access service token, if the tunnel is behind Access.
+    access_client_id: str?
+    access_client_secret: password?
+  fronius:
+    enabled: bool
+    hosts:
+      - str
+    poll_seconds: int(5,300)
+    publish_to_ha: bool
+  mqtt:
+    enabled: bool
+    discovery_prefix: str
+  # Controllable loads. `id` must match a device id used in policy.json.
+  devices:
+    - id: str
+      name: str?
+      kw: float
+      switch: str?
+      power_sensor: str?
+      min_dwell_seconds: int?
