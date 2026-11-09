@@ -5,7 +5,11 @@
    sun could give, so it can't tell the brain there is surplus to spend. This
    estimates what each array COULD produce from irradiance:
 
-       available = irradiance/1000 × kWp × k   (capped at the inverter's AC rating)
+       available = irradiance/1000 × kWp × k   (capped at that inverter's AC rating)
+
+   Each inverter carries its own array size (kWp) and AC rating: sites mix
+   inverter models and array sizes. An inverter with no AC rating is capped at
+   its kWp, which it can't exceed anyway, rather than at a guessed value.
 
    k folds in everything a horizontal irradiance sensor doesn't know about the
    array: tilt and azimuth (a tilted array beats a flat sensor early and late in
@@ -40,24 +44,26 @@ function isUnconstrained({ socPct, batteryKw, pvKw, loadKw, chargeLimitKw }) {
   return true;
 }
 
+/** An inverter's output ceiling: its AC rating, or its array peak if unrated. */
+const capOf = (inv) => (inv.acKw > 0 ? inv.acKw : inv.kwp > 0 ? inv.kwp : Infinity);
+
 const binOf = (date) => Math.floor((date.getHours() * 60 + date.getMinutes()) / BIN_MINUTES);
 
 class SolarEstimator {
-  constructor({ acKw = 10, state } = {}) {
-    this.acKw = acKw;
+  constructor({ state } = {}) {
     this.bins = (state && state.bins) || {};   // inverter key -> bin -> { k, n, last }
   }
 
   toJSON() { return { bins: this.bins }; }
 
-  /** Learn from one moment. inverters: [{ key, kwp, kw }]. Returns samples taken. */
+  /** Learn from one moment. inverters: [{ key, kwp, acKw, kw }]. Returns samples taken. */
   learn({ now, irradiance, inverters, unconstrained }) {
     if (!unconstrained || !(irradiance >= MIN_IRRADIANCE)) return 0;
     const bin = binOf(now);
     let taken = 0;
     for (const inv of inverters) {
       if (!(inv.kwp > 0) || !Number.isFinite(inv.kw)) continue;
-      if (inv.kw >= 0.95 * this.acKw) continue;   // clipping at the AC limit hides the sun
+      if (inv.kw >= 0.95 * capOf(inv)) continue;   // clipping at the AC limit hides the sun
       const sample = inv.kw / ((irradiance / 1000) * inv.kwp);
       if (sample < K_RANGE[0] || sample > K_RANGE[1]) continue;
       const byBin = (this.bins[inv.key] = this.bins[inv.key] || {});
@@ -83,17 +89,18 @@ class SolarEstimator {
     return { k: (b.n * b.k + PRIOR_WEIGHT * PRIOR_K) / (b.n + PRIOR_WEIGHT), n: b.n };
   }
 
-  /** Per-inverter available power and headroom. inverters: [{ key, kwp, kw }]. */
+  /** Per-inverter available power and headroom. inverters: [{ key, kwp, acKw, kw }]. */
   estimate({ now, irradiance, inverters }) {
     return inverters.map((inv) => {
       const { k, n } = this.factor(inv.key, now);
       const availableKw = inv.kwp > 0 && Number.isFinite(irradiance)
-        ? Math.min(this.acKw, Math.max(0, irradiance / 1000) * inv.kwp * k)
+        ? Math.min(capOf(inv), Math.max(0, irradiance / 1000) * inv.kwp * k)
         : NaN;
       const headroomKw = Number.isFinite(availableKw) && Number.isFinite(inv.kw) ? Math.max(0, availableKw - inv.kw) : NaN;
       // Small differences are model error, not throttling.
       const curtailed = Number.isFinite(headroomKw) && headroomKw > Math.max(0.3, 0.15 * availableKw);
-      return { key: inv.key, kwp: inv.kwp, kw: inv.kw, k, samples: n, availableKw, headroomKw, curtailed };
+      return { key: inv.key, kwp: inv.kwp, acKw: inv.acKw > 0 ? inv.acKw : null, kw: inv.kw,
+               k, samples: n, availableKw, headroomKw, curtailed };
     });
   }
 }

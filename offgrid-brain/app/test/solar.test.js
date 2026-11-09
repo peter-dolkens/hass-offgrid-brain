@@ -37,7 +37,7 @@ t("unconstrained only while the battery is taking charge, well below the charge 
   assert.strictEqual(isUnconstrained({ ...base, socPct: NaN }), false, "unknown SoC");
 });
 
-const inv = (kw) => [{ key: "right", kwp: 14.725, kw }];
+const inv = (kw) => [{ key: "right", kwp: 14.725, acKw: 10, kw }];
 const at = (h, m = 0) => new Date(2026, 10, 9, h, m);
 
 t("before learning, the prior performance ratio is used", () => {
@@ -69,9 +69,31 @@ t("doesn't learn while throttled, in low light, or at the AC limit", () => {
   assert.strictEqual(e.learn({ now: at(12), irradiance: 1100, inverters: inv(9.8), unconstrained: true }), 0);
 });
 
-t("available power is capped at the inverter's AC rating", () => {
-  const e = new SolarEstimator({ acKw: 10 });
-  assert.strictEqual(e.estimate({ now: at(12), irradiance: 1200, inverters: inv(0.1) })[0].availableKw, 10);
+t("each inverter is capped at its OWN AC rating", () => {
+  const e = new SolarEstimator();
+  const [a, b] = e.estimate({ now: at(12), irradiance: 1200, inverters: [
+    { key: "big", kwp: 14.725, acKw: 10, kw: 0.1 },
+    { key: "small", kwp: 6.6, acKw: 5, kw: 0.1 },
+  ] });
+  assert.strictEqual(a.availableKw, 10);
+  assert.strictEqual(b.availableKw, 5);
+  assert.strictEqual(b.acKw, 5);
+});
+
+t("an inverter with no AC rating is capped at its kWp, not a guess", () => {
+  const e = new SolarEstimator();
+  const [a] = e.estimate({ now: at(12), irradiance: 1300, inverters: [{ key: "x", kwp: 5, kw: 0 }] });
+  assert.ok(a.availableKw <= 5 && a.availableKw > 4.9, `${a.availableKw}`);
+  assert.strictEqual(a.acKw, null);
+});
+
+t("clipping is judged against each inverter's own rating", () => {
+  const e = new SolarEstimator();
+  // 4.9 kW on a 5 kW inverter is clipping (no sample); on a 10 kW one it's fine.
+  assert.strictEqual(e.learn({ now: at(9), irradiance: 600, unconstrained: true,
+    inverters: [{ key: "small", kwp: 6.6, acKw: 5, kw: 4.9 }] }), 0);
+  assert.strictEqual(e.learn({ now: at(9), irradiance: 600, unconstrained: true,
+    inverters: [{ key: "big", kwp: 9, acKw: 10, kw: 4.9 }] }), 1);
 });
 
 t("learned state survives a round trip", () => {

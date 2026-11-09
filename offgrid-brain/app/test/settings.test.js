@@ -68,6 +68,26 @@ t("loadSettings seeds settings.json once, then reads it back", () => {
   fs.rmSync(dir, { recursive: true });
 });
 
+t("solar inverters: the old single AC rating becomes one entry per inverter, once", () => {
+  const s = Settings.normalise(oldOptions);
+  const disc = [{ key: "right", name: "Solar Inverter (Right)" }, { key: "left", name: "Solar Inverter (Left)" }];
+  assert.strictEqual(Settings.migrateSolar(s, []), null, "waits until the bridge reports inverters");
+  const m = Settings.migrateSolar(s, disc);
+  assert.deepStrictEqual(m.solar, { inverters: [
+    { key: "right", name: "Solar Inverter (Right)", ac_kw: 10, kwp: null },
+    { key: "left", name: "Solar Inverter (Left)", ac_kw: 10, kwp: null },
+  ] });
+  assert.strictEqual(Settings.migrateSolar(m, disc), null, "only once");
+  assert.deepStrictEqual(Settings.check(m), []);
+});
+
+t("solar inverter validation", () => {
+  const s = Settings.normalise({});
+  s.solar.inverters = [{ key: "a", ac_kw: -1 }, { key: "a", ac_kw: 5 }, { name: "no key" }, { key: "b", kwp: 0 }];
+  const p = Settings.check(s).join(" | ");
+  for (const want of ["AC rating", "listed twice", "needs a key", "array kWp"]) assert.ok(p.includes(want), `${want}: ${p}`);
+});
+
 t("old option devices fold into policy.json devices", () => {
   const policy = { devices: [{ id: "ev", name: "EV", kw: 7 }], list: [{ type: "load", dev: "ev", cond: "1" }] };
   assert.strictEqual(mergeDeviceOptions(policy, oldOptions.devices), true);

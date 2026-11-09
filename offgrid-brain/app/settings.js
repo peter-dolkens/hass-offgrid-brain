@@ -23,7 +23,9 @@ const DEFAULTS = Object.freeze({
   sources: { battery_soc: "", pv_power: "", load_power: "", outdoor_temp: "", pv_forecast_today: "", irradiance: "" },
   splink: { enabled: false, urls: [], poll_seconds: 15, fast_seconds: 3 },
   ecowitt: { enabled: false, urls: [], poll_seconds: 10 },
-  solar: { inverter_ac_kw: 10, kwp: null },
+  // One entry per AC-coupled solar inverter, keyed like the bridge's inverters.
+  // kwp null = use the inverter's own configured PV peak.
+  solar: { inverters: [] },
   fronius: { enabled: false, hosts: [], poll_seconds: 10 },
 });
 
@@ -80,9 +82,19 @@ function check(s) {
   urls("ecowitt", ec.urls);
   if (ec.enabled && !(ec.urls || []).length) p.push("ecowitt is enabled but has no URLs");
   if (!num(ec.poll_seconds, 5, 300)) p.push("ecowitt poll must be 5-300 s");
-  const so = s.solar || {};
-  if (!num(so.inverter_ac_kw, 0.1, 1000)) p.push("inverter AC rating must be positive");
-  if (so.kwp != null && !num(so.kwp, 0.1, 10000)) p.push("array kWp override must be positive or empty");
+  const inv = (s.solar || {}).inverters;
+  if (!Array.isArray(inv)) p.push("solar inverters must be a list");
+  else {
+    const keys = new Set();
+    for (const [i, x] of inv.entries()) {
+      const label = (x && (x.name || x.key)) || `inverter ${i + 1}`;
+      if (!x || typeof x.key !== "string" || !x.key) { p.push(`solar inverter ${i + 1} needs a key`); continue; }
+      if (keys.has(x.key)) p.push(`solar inverter "${x.key}" is listed twice`);
+      keys.add(x.key);
+      if (x.ac_kw != null && !num(x.ac_kw, 0.1, 1000)) p.push(`${label}: AC rating must be positive kW`);
+      if (x.kwp != null && !num(x.kwp, 0.1, 10000)) p.push(`${label}: array kWp must be positive (or empty to use the inverter's own)`);
+    }
+  }
   const fr = s.fronius || {};
   if (!Array.isArray(fr.hosts)) p.push("fronius hosts must be a list");
   if (!num(fr.poll_seconds, 5, 300)) p.push("fronius poll must be 5-300 s");
@@ -115,4 +127,19 @@ function save(s, file = SETTINGS_PATH) {
   fs.renameSync(tmp, file);
 }
 
-module.exports = { DEFAULTS, normalise, check, loadSettings, save, SETTINGS_PATH };
+/** Pre-0.10 settings had one AC rating (and kWp override) for every inverter.
+    Turn that into an entry per inverter the bridge reports, once. Returns the
+    migrated settings, or null when there's nothing to migrate yet. */
+function migrateSolar(s, discovered) {
+  const legacy = s.solar || {};
+  if ((legacy.inverters || []).length || legacy.inverter_ac_kw == null || !(discovered || []).length) return null;
+  const next = JSON.parse(JSON.stringify(s));
+  next.solar = {
+    inverters: discovered.map((i) => ({
+      key: i.key, name: i.name, ac_kw: legacy.inverter_ac_kw, kwp: legacy.kwp == null ? null : legacy.kwp,
+    })),
+  };
+  return next;
+}
+
+module.exports = { DEFAULTS, normalise, check, loadSettings, save, migrateSolar, SETTINGS_PATH };

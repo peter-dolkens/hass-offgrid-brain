@@ -81,7 +81,7 @@ async function main() {
   const saved = loadState();
   let history = LoadHistory.fromJSON(saved.history, settings.autonomy.window_days, settings.autonomy.seed_load_kwh);
   // Per-array factors learned so far (irradiance -> available kW) survive restarts.
-  const estimator = new SolarEstimator({ acKw: settings.solar.inverter_ac_kw, state: saved.solar });
+  const estimator = new SolarEstimator({ state: saved.solar });
 
   // ---- parts rebuilt when their settings change ------------------------------
   let splink = null, ecowitt = null, fronius = null, timer = null;
@@ -102,7 +102,6 @@ async function main() {
       if (prev) log.warn(`control mode changed from the web panel: ${next.dry_run ? "DRY RUN" : "LIVE CONTROL"}`);
     }
     limits = { ...next.battery, tick_hours: next.tick_seconds / 3600 };
-    estimator.acKw = next.solar.inverter_ac_kw;
     if (prev && changed("autonomy")) {
       history = LoadHistory.fromJSON(history.toJSON(), next.autonomy.window_days, next.autonomy.seed_load_kwh);
     }
@@ -181,7 +180,7 @@ async function main() {
 
   async function tick() {
     const now = new Date();
-    const { sources, battery, solar: solarCfg } = settings;
+    const { sources, battery } = settings;
     const tickSec = settings.tick_seconds;
     const dryRun = settings.dry_run;
 
@@ -216,10 +215,23 @@ async function main() {
     const irrEnt = pick([["ecowitt", ecowitt.irradiance], ["ha", ha.number(sources.irradiance)]]);
     const irradiance = irrEnt.ageSec < STALE_SEC ? irrEnt.value : NaN;
     const pvDelivered = Number.isFinite(pvEnt.value) && pvAge < STALE_SEC ? pvEnt.value : NaN;
-    const arrays = (sp.inverters || []).map((i) => ({
-      key: i.key, name: i.name, kwp: solarCfg.kwp || i.kwp,
-      kw: i.powerKw.ageSec < STALE_SEC ? i.powerKw.value : NaN,
-    }));
+    // One-time: pre-0.10 settings had a single AC rating for every inverter.
+    const migrated = Settings.migrateSolar(settings, sp.inverters);
+    if (migrated) {
+      Settings.save(migrated);
+      applySettings(migrated, settings);
+      log.info(`solar: gave each inverter its own entry (${migrated.solar.inverters.map((i) => i.key).join(", ")}); edit them in Settings`);
+    }
+    // Each inverter's own array size and AC rating; kWp falls back to what the
+    // inverter itself is configured with.
+    const invCfg = new Map(settings.solar.inverters.map((c) => [c.key, c]));
+    const arrays = (sp.inverters || []).map((i) => {
+      const c = invCfg.get(i.key) || {};
+      return {
+        key: i.key, name: c.name || i.name, kwp: c.kwp || i.kwp, acKw: c.ac_kw || NaN, configured: !!invCfg.get(i.key),
+        kw: i.powerKw.ageSec < STALE_SEC ? i.powerKw.value : NaN,
+      };
+    });
     const unconstrained = isUnconstrained({
       socPct: socUsable ? socEnt.value : NaN,
       batteryKw: sp.batteryKw && sp.batteryKw.ageSec < STALE_SEC ? sp.batteryKw.value : NaN,
@@ -236,7 +248,10 @@ async function main() {
       irradiance: irrEnt, deliveredKw: pvDelivered, availableKw: pvAvailable,
       headroomKw: Number.isFinite(pvAvailable) && Number.isFinite(pvDelivered) ? Math.max(0, pvAvailable - pvDelivered) : NaN,
       curtailed: perArray.some((a) => a.curtailed), unconstrained,
-      charger: sp.charger || null, arrays: perArray.map((a, n) => ({ ...a, name: arrays[n].name })),
+      charger: sp.charger || null,
+      arrays: perArray.map((a, n) => ({ ...a, name: arrays[n].name, configured: arrays[n].configured })),
+      // What the bridge reports, for the Settings tab's inverter table.
+      discovered: (sp.inverters || []).map((i) => ({ key: i.key, name: i.name, kwp: i.kwp })),
     };
 
     const ctx = buildContext({

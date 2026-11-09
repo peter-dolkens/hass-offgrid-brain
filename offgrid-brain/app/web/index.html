@@ -170,6 +170,12 @@
   <section id="tab-settings" hidden>
     <div id="settings-form"><div class="empty">Loading settings…</div></div>
     <div class="card">
+      <h2>Solar inverters <span class="muted">Each AC-coupled inverter's AC rating and array size, for the available-solar estimate. Inverters the bridge reports are listed automatically; kWp left blank uses the inverter's own configured PV peak.</span></h2>
+      <div style="overflow-x:auto"><table class="devtable"><thead><tr>
+        <th>Key</th><th>Name</th><th>AC rating (kW)</th><th>Array (kWp)</th><th></th>
+      </tr></thead><tbody id="invrows"></tbody></table></div>
+    </div>
+    <div class="card">
       <div class="actions">
         <button class="btn primary" id="btn-settings-save">Save settings</button>
         <button class="btn" id="btn-settings-revert">Revert</button>
@@ -306,7 +312,7 @@ function renderSolar(sol) {
   const rows = sol.arrays.map((a) => {
     const pct = a.availableKw > 0 ? Math.min(100, (100 * (a.kw || 0)) / a.availableKw) : 0;
     return `<div class="row"><div class="idx"></div>
-      <div><div class="name">${esc(a.name)} <span class="muted">${fmt(a.kwp, 2)} kWp</span></div>
+      <div><div class="name">${esc(a.name)} <span class="muted">${fmt(a.kwp, 2)} kWp · ${a.acKw ? `${fmt(a.acKw, 1)} kW AC` : '<span class="live-warn">no AC rating set (capped at kWp)</span>'}</span></div>
         <div class="why">Delivering ${watts(a.kw)} of ${watts(a.availableKw)} available · headroom ${watts(a.headroomKw)} ·
           factor ${fmt(a.k, 2)} from ${a.samples} sample${a.samples === 1 ? "" : "s"}${a.samples ? "" : " (typical value until it learns)"}</div>
         <div class="split"><div class="pv" style="width:${pct}%"></div></div></div>
@@ -458,8 +464,6 @@ const FIELDS = [
   ["Irradiance (Ecowitt gateway)", "ecowitt.enabled", "bool", "Enabled"],
   ["Irradiance (Ecowitt gateway)", "ecowitt.urls", "list", "URLs", "One per line, e.g. Ethernet then Wi-Fi."],
   ["Irradiance (Ecowitt gateway)", "ecowitt.poll_seconds", "int", "Poll (s)"],
-  ["Available solar", "solar.inverter_ac_kw", "num", "Inverter AC rating (kW)", "Each AC-coupled inverter's ceiling."],
-  ["Available solar", "solar.kwp", "num?", "Array kWp override", "Blank = each inverter's configured PV peak."],
   ["Autonomy", "autonomy.seed_load_kwh", "num", "Seed daily load (kWh)", "Used until a week of real load history exists."],
   ["Autonomy", "autonomy.window_days", "int", "History window (days)"],
   ["Fronius direct polling", "fronius.enabled", "bool", "Enabled", "Not needed with the bridge."],
@@ -527,7 +531,43 @@ function readSettings() {
     else v = Number(el.value);
     setPath(s, path, v);
   }
+  s.solar = { inverters: readInverters() };   // replaces the pre-0.10 single values
   return s;
+}
+
+// ---------- solar inverters (part of settings) ----------
+let invKeys = [];
+function renderInverters(configured) {
+  const disc = (state && state.solar && state.solar.discovered) || [];
+  const byKey = new Map(configured.map((c) => [c.key, c]));
+  for (const d of disc) if (!byKey.has(d.key)) byKey.set(d.key, { key: d.key, name: d.name, ac_kw: null, kwp: null });
+  const rows = [...byKey.values()];
+  invKeys = rows.map((r) => r.key);
+  const seen = new Map(disc.map((d) => [d.key, d]));
+  $("invrows").innerHTML = rows.map((r, i) => {
+    const d = seen.get(r.key);
+    const note = !d ? "not reported by the bridge right now"
+      : r.ac_kw == null ? '<span class="live-warn">needs an AC rating</span>' : "reported by the bridge";
+    return `<tr data-inv="${i}">
+      <td><code>${esc(r.key)}</code></td>
+      <td><input data-k="name" value="${esc(r.name || "")}"></td>
+      <td><input data-k="ac_kw" class="num" type="number" step="any" value="${r.ac_kw == null ? "" : esc(r.ac_kw)}" placeholder="kW"></td>
+      <td><input data-k="kwp" class="num" type="number" step="any" value="${r.kwp == null ? "" : esc(r.kwp)}"
+        placeholder="${d && Number.isFinite(d.kwp) ? esc(d.kwp) : "kWp"}"></td>
+      <td class="muted" style="font-size:12px">${note}</td></tr>`;
+  }).join("") || '<tr><td colspan="5" class="muted">No inverters reported yet. They appear here once the SP PRO bridge reads them.</td></tr>';
+}
+
+function readInverters() {
+  return [...document.querySelectorAll("#invrows tr[data-inv]")].map((tr) => {
+    const x = { key: invKeys[Number(tr.dataset.inv)] };
+    for (const el of tr.querySelectorAll("input[data-k]")) {
+      const v = el.value.trim();
+      if (el.dataset.k === "name") x.name = v;
+      else x[el.dataset.k] = v === "" ? null : Number(v);
+    }
+    return x;
+  });
 }
 
 function showList(el, list) { el.innerHTML = list.map((p) => `<li>${esc(p)}</li>`).join(""); el.hidden = !list.length; }
@@ -541,6 +581,7 @@ async function loadSettingsTab() {
   fillDatalists();
   settingsSaved = st.settings;
   renderSettings(settingsSaved);
+  renderInverters((settingsSaved.solar && settingsSaved.solar.inverters) || []);
   $("sstatus").textContent = `${st.path} · ${entities.length} Home Assistant entities available`;
   showList($("sproblems"), []);
   const pol = await fetch("api/policy", { cache: "no-store" }).then((r) => r.json());
@@ -608,7 +649,7 @@ async function saveDevices() {
 }
 
 $("btn-settings-save").onclick = saveSettings;
-$("btn-settings-revert").onclick = () => { renderSettings(settingsSaved); showList($("sproblems"), []); $("sstatus").textContent = "Reverted to the saved settings."; };
+$("btn-settings-revert").onclick = () => { renderSettings(settingsSaved); renderInverters(settingsSaved.solar.inverters || []); showList($("sproblems"), []); $("sstatus").textContent = "Reverted to the saved settings."; };
 $("btn-dev-add").onclick = () => { const d = readDevices(); d.push({ id: "", name: "", kw: 0 }); renderDevices(d); };
 $("btn-dev-save").onclick = saveDevices;
 

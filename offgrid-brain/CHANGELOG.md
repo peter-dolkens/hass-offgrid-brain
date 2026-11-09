@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0
+- **Solar inverters are configured individually.** Each has its own AC rating and
+  array kWp (blank = the inverter's own configured PV peak), in a new Settings →
+  Solar inverters table that lists the inverters the bridge reports. This replaces
+  the single AC rating and kWp override that applied to every inverter. An existing
+  single rating becomes one entry per inverter, once.
+- An inverter with no AC rating is capped at its kWp rather than a guessed value,
+  and the Live view flags it.
+
 ## 0.9.0
 - **Settings move into the panel.** A new Settings tab edits everything except
   the log level and secrets, and applies it live without a restart: dry run (going

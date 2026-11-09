@@ -109,10 +109,19 @@ battery is full**. The inverters' output is then what was *delivered*, not what 
 sun could give, so on its own it would never show surplus to spend. The brain
 estimates what each array **could** produce:
 
-    available = irradiance / 1000 × array kWp × k,  capped at the inverter's AC rating
+    available = irradiance / 1000 × array kWp × k,  capped at that inverter's AC rating
 
-- **Array kWp** comes from each inverter's own configuration through the bridge
-  (Fronius `PVPower`). `solar.kwp` overrides it and `solar.inverter_ac_kw` sets the cap.
+- **Each inverter is configured separately** in Settings → Solar inverters, with its
+  own **AC rating** and **array kWp**. Inverters the bridge reports appear there
+  automatically. A blank kWp uses the inverter's own configured PV peak (Fronius
+  `PVPower`). The AC rating has to be entered, because the inverter doesn't report
+  it. An inverter without one is capped at its kWp and flagged in the panel.
+
+  ```json
+  "solar": { "inverters": [
+    { "key": "right", "name": "Solar Inverter (Right)", "ac_kw": 10, "kwp": null },
+    { "key": "left",  "name": "Solar Inverter (Left)",  "ac_kw": 10, "kwp": null } ] }
+  ```
 - **k** captures everything a horizontal irradiance sensor doesn't know about the
   array: tilt and azimuth, temperature, soiling and losses. It is **learned per
   inverter and per half-hour of the day**, only from moments the array is
