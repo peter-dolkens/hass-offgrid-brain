@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.14.0
+- Solar forecast: the brain reads the hourly forecasts attached to solar in
+  Home Assistant's Energy dashboard (Forecast.Solar, Solcast, ...), summed across
+  every plane. No setting needed; add a forecast integration and attach it to
+  each solar source.
+- `autonomy` now plans for the worse of today's and tomorrow's forecast totals,
+  like the simulator's worst-day lookahead; the `forecast` variable uses the next
+  24 h. The "Solar forecast today" entity is now an optional override.
+
 ## 0.13.0
 - Removed Cloudflare Access support: the `cloudflare_access` option and the
   service-token headers on SP PRO bridge requests. The add-on Configuration screen
