@@ -11,7 +11,12 @@
    which loads the brain would shed and when, and the battery is integrated the way
    the SP PRO does it: solar serves the load first, the surplus charges up to the
    charger limit, the shortfall discharges. Like the simulator it holds the battery
-   at the reserve and flags the hours that would need the Shark or a generator. */
+   at the reserve and flags the hours that would need the Shark or a generator.
+
+   The battery also carries the inverter's own draw: what leaves the battery minus
+   what reaches the AC load. On an SP PRO that's ~40 W, near enough constant, which
+   is ~1 kWh a day. It's learned from the recording (learnOverhead) and charged to
+   every projected step, so it's met from solar when there is some. */
 "use strict";
 const fs = require("fs");
 const log = require("../log.js");
@@ -95,6 +100,22 @@ function loadProfile(samples, fallbackKw) {
   return (t) => { const h = new Date(t).getHours(); return n[h] ? sum[h] / n[h] : Number.isFinite(mean) ? mean : 0; };
 }
 
+/** The inverter's own draw (kW): the median of battery discharge minus AC load
+    over the recorded minutes with no solar and the battery discharging. 0 until
+    there are `minSamples` such minutes. */
+function learnOverhead(samples, minSamples = 10) {
+  const x = [];
+  for (const s of samples) {
+    if (!Number.isFinite(s.battKw) || !Number.isFinite(s.loadKw) || s.battKw > -0.01) continue;
+    if (Number.isFinite(s.pvKw) && s.pvKw > 0.02) continue;
+    x.push(-s.battKw - s.loadKw);
+  }
+  if (x.length < minSamples) return 0;
+  x.sort((a, b) => a - b);
+  const m = x[Math.floor(x.length / 2)];
+  return Math.max(0, Math.min(1, m));
+}
+
 /** Forecast kW at a time: the hour's kWh, which is its mean kW. NaN past the forecast. */
 function forecastAt(hourly) {
   const m = new Map(hourly.map((h) => [h.t, h.kwh]));
@@ -111,8 +132,9 @@ function forecastAt(hourly) {
  *   forecast     [{t, kwh}] hourly
  *   load         (t) => kW
  *   autonomy     { expectedLoadKwh, forecastKwh } for each step's autonomy
+ *   overheadKw   the inverter's own draw, on top of the load (learnOverhead)
  */
-function project({ now, soc, ctx, policy, limits, battery, forecast, load, autonomy = {}, hours = 24, stepMin = 30 }) {
+function project({ now, soc, ctx, policy, limits, battery, forecast, load, autonomy = {}, overheadKw = 0, hours = 24, stepMin = 30 }) {
   const pvAt = forecastAt(forecast || []);
   const stepH = stepMin / 60, cap = battery.capacity_kwh, reserve = battery.reserve_pct;
   const out = [];
@@ -131,10 +153,10 @@ function project({ now, soc, ctx, policy, limits, battery, forecast, load, auton
     };
     const r = decide(policy, c, limits);
     const chargeRoom = s < 99.5 ? battery.max_charge_kw : 0;
-    const used = Math.min(pv, loadKw + chargeRoom);
-    const battKw = used - loadKw;
+    const used = Math.min(pv, loadKw + overheadKw + chargeRoom);
+    const battKw = used - loadKw - overheadKw;
     out.push({
-      t, soc: +s.toFixed(2), loadKw: +loadKw.toFixed(4), pvKw: +used.toFixed(4), availKw: known ? +pv.toFixed(4) : null, battKw: +battKw.toFixed(4),
+      t, soc: +s.toFixed(2), loadKw: +loadKw.toFixed(4), pvKw: +used.toFixed(4), availKw: known ? +pv.toFixed(4) : null, battKw: +battKw.toFixed(4) || 0,
       run: r.decisions.filter((x) => x.run).map((x) => x.id), shed: r.shed.map((x) => x.id), floorPct: r.floorPct,
       deficit: s <= reserve + 0.01 && battKw < -0.01, forecast: known,
     });
@@ -143,4 +165,4 @@ function project({ now, soc, ctx, policy, limits, battery, forecast, load, auton
   return out;
 }
 
-module.exports = { Recorder, project, loadProfile, forecastAt };
+module.exports = { Recorder, project, loadProfile, forecastAt, learnOverhead };

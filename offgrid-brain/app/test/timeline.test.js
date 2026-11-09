@@ -5,7 +5,7 @@ const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { Recorder, project, loadProfile, forecastAt } = require("../policy/timeline.js");
+const { Recorder, project, loadProfile, forecastAt, learnOverhead } = require("../policy/timeline.js");
 
 let pass = 0;
 const t = (name, fn) => { try { fn(); pass++; console.log(`  ok  ${name}`); } catch (e) { console.error(`  FAIL ${name}\n       ${e.message}`); process.exitCode = 1; } };
@@ -81,6 +81,21 @@ t("projection: the dispatch walk sheds below a floor; the reserve holds and flag
 t("projection: a full battery takes no charge, so solar only meets the load", () => {
   const steps = project({ now: T0, soc: 100, ctx, policy, limits, battery, forecast: [{ t: T0, kwh: 9 }], load: () => 0.2, hours: 0, stepMin: 60 });
   assert.deepStrictEqual([steps[0].pvKw, steps[0].battKw, steps[0].soc], [0.2, 0, 100]);
+});
+
+t("overhead: median of discharge minus load, at night only, once there's enough", () => {
+  const night = (k) => ({ t: T0 + k * MIN, battKw: -0.112 - (k === 3 ? 2 : 0), loadKw: 0.071, pvKw: 0 });
+  const xs = Array.from({ length: 12 }, (_, k) => night(k));
+  xs.push({ t: T0, battKw: -0.5, loadKw: 0.1, pvKw: 3 });       // sunny: ignored
+  xs.push({ t: T0, battKw: 2, loadKw: 0.1, pvKw: 0 });          // charging: ignored
+  assert.ok(Math.abs(learnOverhead(xs) - 0.041) < 1e-9, String(learnOverhead(xs)));
+  assert.strictEqual(learnOverhead(xs.slice(0, 5)), 0, "too few minutes");
+});
+
+t("projection: the overhead drains the battery at night and is met from solar by day", () => {
+  const steps = project({ now: T0, soc: 50, ctx, policy, limits, battery, forecast: [{ t: T0, kwh: 0.5 }, { t: T0 + HOUR, kwh: 0 }],
+    load: () => 0.4, overheadKw: 0.1, hours: 1, stepMin: 60 });
+  assert.deepStrictEqual(steps.map((s) => [s.pvKw, s.battKw]), [[0.5, 0], [0, -0.5]]);
 });
 
 console.log(`\n${pass} passed`);

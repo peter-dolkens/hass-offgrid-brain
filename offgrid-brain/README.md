@@ -29,8 +29,10 @@ The add-on adds **Off-Grid Brain** to the Home Assistant sidebar (Ingress, admin
 - **Live:** a **timeline** of the last 24 h, as the brain recorded it, and the next
   24 h, projected (battery %, solar used and available, load, and when loads shed).
   The projection walks the dispatch list in half-hour steps, using the solar
-  forecast and the last day's load at the same time of day; hours where the battery
-  would sit at the reserve are tinted. Click or drag the timeline to look at any
+  forecast and the last day's load at the same time of day, plus the battery
+  inverter's own draw. That draw is learned from the recording as battery discharge
+  minus AC load with no sun, about 40 W on an SP PRO. Hours where the battery would
+  sit at the reserve are tinted. Click or drag the timeline to look at any
   moment, or press **Replay** to play the last day at 60× until it catches up to now.
   Under it are three panels for the moment being viewed:
   - **Battery:** a ring with each charge rung's floor and the reserve, the

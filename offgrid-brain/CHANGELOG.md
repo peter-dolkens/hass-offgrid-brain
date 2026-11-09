@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.5
+- The timeline's projection includes the battery inverter's own draw, on top of
+  the AC load. The brain learns it from its recording: the median of battery
+  discharge minus AC load while there's no sun (~40 W on an SP PRO, ~1 kWh a day).
+  Overnight drain was under-projected without it. `/api/timeline` reports it as
+  `overheadKw`.
+
 ## 0.15.4
 - Live: "not needed" and "already served" dispatch entries have their own Show/Hide
   buttons.

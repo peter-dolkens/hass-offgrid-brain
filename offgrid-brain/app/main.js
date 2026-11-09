@@ -30,7 +30,7 @@ const { Actuator } = require("./sinks/actuator.js");
 const { MqttSink, resolveBroker } = require("./sinks/mqtt.js");
 const { decide } = require("./policy/dispatch.js");
 const { buildContext, LoadHistory } = require("./policy/context.js");
-const { Recorder, project, loadProfile } = require("./policy/timeline.js");
+const { Recorder, project, loadProfile, learnOverhead } = require("./policy/timeline.js");
 const { startServer, savePolicy } = require("./web/server.js");
 const VERSION = require("./package.json").version;
 
@@ -156,13 +156,15 @@ async function main() {
     const floors = [...new Set(policy.list.filter((e) => e.type === "charge" && e.to < 100).map((e) => e.to))].sort((a, b) => a - b);
     const base = { now, from: now - 24 * 3600 * 1000, to: now + 24 * 3600 * 1000, battery: settings.battery, floors, devices, past };
     if (!lastTick) return { ...base, future: [] };
+    const overheadKw = learnOverhead(recorder.all());
     const future = project({
       now, soc: lastTick.soc, ctx: lastTick.ctx, policy, limits, battery: settings.battery,
       forecast: forecast.between(now - 3600 * 1000, now + 25 * 3600 * 1000),
       load: loadProfile(past, lastTick.loadKw),
       autonomy: lastTick.autonomy,
+      overheadKw,
     });
-    return { ...base, future, forecast: lastTick.forecast };
+    return { ...base, future, overheadKw, forecast: lastTick.forecast };
   }
   const summarise = (r) => ({
     trace: r.trace, decisions: r.decisions, floorPct: r.floorPct, chargeKw: r.charge,
