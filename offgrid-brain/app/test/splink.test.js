@@ -169,4 +169,20 @@ t("poller reads /fast and stops asking a bridge that has none", async () => {
   } finally { server.close(); }
 });
 
+t("energy counters: Fronius lifetime totals summed, SP PRO daily counters as-is", () => {
+  const r = parseBridge(fixture, Date.parse(fixture.sp_pro.today_read_at) + 60_000);
+  const sum = fixture.fronius.reduce((a, i) => a + i.energy.total_wh, 0) / 1000;
+  assert.strictEqual(r.energy.solarKwh.value, sum);
+  assert.strictEqual(r.energy.batteryInKwh.value, fixture.sp_pro.today.battery_in_kwh);
+  assert.strictEqual(r.energy.batteryOutKwh.value, fixture.sp_pro.today.battery_out_kwh);
+  assert.strictEqual(r.energy.loadKwh.value, fixture.sp_pro.today.ac_load_kwh);
+  assert.strictEqual(r.energy.generatorKwh.value, fixture.sp_pro.today.ac_input_kwh);
+  assert.strictEqual(r.energy.loadKwh.ageSec, 60);
+});
+
+t("no solar energy total unless every inverter is healthy", () => {
+  const d = clone(); d.fronius[0].healthy = false;
+  assert.ok(Number.isNaN(parseBridge(d).energy.solarKwh.value));
+});
+
 Promise.all(results).then(() => console.log(`\n${pass} passed`));

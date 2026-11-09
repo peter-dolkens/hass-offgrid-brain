@@ -42,6 +42,20 @@ async function resolveBroker(opt, supervisorToken) {
 /* Numbers HA can't parse would log an error per update; "None" reads as unknown. */
 const num = (v, digits) => (Number.isFinite(v) ? v.toFixed(digits) : "None");
 
+/* The bridge re-reads its energy block every few minutes. A counter older than
+   this isn't published, so the last retained value stands instead of "unknown"
+   (which would break the Energy dashboard's hourly statistics). */
+const ENERGY_STALE_SEC = 900;
+
+/* Energy dashboard inputs: key -> [name, field in inputs.energy, icon]. */
+const ENERGY = {
+  solar_energy: ["Solar energy", "solarKwh", "mdi:solar-power-variant"],
+  battery_in_energy: ["Battery charged", "batteryInKwh", "mdi:battery-arrow-down"],
+  battery_out_energy: ["Battery discharged", "batteryOutKwh", "mdi:battery-arrow-up"],
+  load_energy: ["Load energy", "loadKwh", "mdi:home-lightning-bolt"],
+  generator_energy: ["Generator energy", "generatorKwh", "mdi:engine"],
+};
+
 class MqttSink {
   constructor({ enabled, discoveryPrefix, broker }) {
     this.enabled = enabled;
@@ -106,6 +120,20 @@ class MqttSink {
     this.publish("sensor", "load_power", num(inputs.loadKw.value * 1000, 0), { name: "Load", ...power });
     this.publish("sensor", "pv_power", num(ctx.pv * 1000, 0), { name: "Solar", ...power });
     this.publish("sensor", "charge_power", num(result.charge * 1000, 0), { name: "Charging", ...power, icon: "mdi:battery-charging" });
+    // Battery power for the Energy dashboard: positive while discharging, negative while charging.
+    if (inputs.batteryKw) {
+      const b = inputs.batteryKw;
+      this.publish("sensor", "battery_power", num(b.ageSec < ENERGY_STALE_SEC ? b.value * 1000 : NaN, 0),
+        { name: "Battery power", ...power, icon: "mdi:home-battery" });
+    }
+    for (const [key, [name, field, icon]] of Object.entries(ENERGY)) {
+      const r = inputs.energy && inputs.energy[field];
+      if (!r || !Number.isFinite(r.value) || r.ageSec >= ENERGY_STALE_SEC) continue;
+      this.publish("sensor", key, r.value.toFixed(3), {
+        name, unit_of_measurement: "kWh", device_class: "energy", state_class: "total_increasing",
+        suggested_display_precision: 2, icon,
+      });
+    }
     this.publish("sensor", "deficit_power", num(result.deficitKw * 1000, 0), { name: "Deficit", ...power, icon: "mdi:alert" });
     this.publish("sensor", "autonomy", num(ctx.autonomy, 2),
       { name: "Autonomy", unit_of_measurement: "d", state_class: "measurement", icon: "mdi:battery-clock" });

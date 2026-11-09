@@ -192,7 +192,7 @@ async function main() {
     lastCtx = ctx;
     snapshot = {
       time: now.toISOString(), version: VERSION, dryRun, safeMode, tickSec, battery,
-      inputs: { soc: socEnt, loadKw: loadEnt, pvKw: pvEnt },
+      inputs: { soc: socEnt, loadKw: loadEnt, pvKw: pvEnt, batteryKw: sp.batteryKw || null, energy: sp.energy || null },
       splinkSource: splinkCfg.enabled ? splink.source : null,
       ctx,
       result: summarise(result),

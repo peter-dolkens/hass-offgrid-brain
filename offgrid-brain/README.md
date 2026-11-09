@@ -144,10 +144,26 @@ Known GEN24 limitations:
 ### `mqtt`: optional bridge
 
 Publishes the brain's state as an **Off-Grid Brain** device via MQTT discovery:
-battery SoC (the real reading, even in safe mode), load, solar, charging and
-deficit power, autonomy, the deepest floor, the number and list of loads shed,
+battery SoC (the real reading, even in safe mode), load, solar, battery, charging
+and deficit power, autonomy, the deepest floor, the number and list of loads shed,
 and `safe_mode` / `dry_run` binary sensors. The numeric sensors keep long-term
 statistics.
+
+With `splink` it also publishes the counters the **Energy dashboard** needs:
+
+| Energy dashboard | Entity | Source |
+|---|---|---|
+| Solar production | `sensor.offgrid_brain_solar_energy` | Fronius lifetime counters, summed |
+| Battery: energy going in | `sensor.offgrid_brain_battery_in_energy` | SP PRO, today |
+| Battery: energy coming out | `sensor.offgrid_brain_battery_out_energy` | SP PRO, today |
+| Battery power | `sensor.offgrid_brain_battery_power` | SP PRO; positive = discharging |
+| Grid consumption (generator) | `sensor.offgrid_brain_generator_energy` | SP PRO AC input, today |
+| Individual device | `sensor.offgrid_brain_load_energy` | SP PRO AC load, today |
+
+The SP PRO only exposes daily counters, reset at its own midnight. They are
+`total_increasing`, so Home Assistant treats the reset as a new cycle. A counter
+the bridge hasn't refreshed for 15 minutes isn't published, so the last value
+stands rather than going unknown.
 
 ```yaml
 mqtt:

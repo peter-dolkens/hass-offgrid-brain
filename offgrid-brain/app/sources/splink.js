@@ -36,13 +36,30 @@ function parseBridge(doc, now = Date.now()) {
 
   // PV is only trustworthy when every inverter reported; a partial sum would
   // under-read solar. Age is the OLDEST inverter reading.
-  let pvKw = NONE;
+  let pvKw = NONE, solarKwh = NONE;
   const inv = Array.isArray(doc && doc.fronius) ? doc.fronius : [];
-  if (inv.length && inv.every((i) => i.healthy && i.ac && Number.isFinite(i.ac.power_watts))) {
-    const oldest = inv.map((i) => i.taken_at).sort((a, b) => Date.parse(a) - Date.parse(b))[0];
+  const invOk = inv.length && inv.every((i) => i.healthy);
+  const oldest = invOk ? inv.map((i) => i.taken_at).sort((a, b) => Date.parse(a) - Date.parse(b))[0] : null;
+  if (invOk && inv.every((i) => i.ac && Number.isFinite(i.ac.power_watts))) {
     pvKw = reading(inv.reduce((s, i) => s + i.ac.power_watts, 0) / 1000, oldest, now);
   }
-  return { soc, loadKw, batteryKw, pvKw, healthy: spOk };
+  // Lifetime counters: monotonic, so the Energy dashboard can use them directly.
+  if (invOk && inv.every((i) => i.energy && Number.isFinite(i.energy.total_wh))) {
+    solarKwh = reading(inv.reduce((s, i) => s + i.energy.total_wh, 0) / 1000, oldest, now);
+  }
+
+  // The SP PRO only exposes TODAY's energy, reset at its own midnight. That still
+  // works as total_increasing: HA treats the drop to zero as a new cycle.
+  const today = (spOk && sp.today) || {};
+  const day = (v) => (spOk ? reading(v, sp.today_read_at, now) : NONE);
+  const energy = {
+    solarKwh,
+    batteryInKwh: day(today.battery_in_kwh),
+    batteryOutKwh: day(today.battery_out_kwh),
+    loadKwh: day(today.ac_load_kwh),
+    generatorKwh: day(today.ac_input_kwh),
+  };
+  return { soc, loadKw, batteryKw, pvKw, energy, healthy: spOk };
 }
 
 /** The bridge's fast window (GET /fast): SoC and AC load, re-read every few
