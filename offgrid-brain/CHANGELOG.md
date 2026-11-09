@@ -1,10 +1,13 @@
 # Changelog
 
+## 0.18.3
+- Live: the timeline's kW scale fits the largest load, solar delivered or solar
+  available in the recorded and projected day, so available solar is no longer
+  clipped at the top (0.18.2 left it out).
+
 ## 0.18.2
-- Live: the timeline's kW scale fits the load and the solar actually delivered
-  (recorded and projected), not the sun available. Throttled arrays could give far
-  more than the house draws, which flattened the load line; available solar is now
-  clipped at the top. Small scales label their ticks to two decimals.
+- Live: the timeline's kW scale fits the day's flows rather than a fixed ceiling;
+  small scales label their ticks to two decimals.
 
 ## 0.18.1
 - Live: the compact timeline takes over earlier, as soon as the full chart's bottom

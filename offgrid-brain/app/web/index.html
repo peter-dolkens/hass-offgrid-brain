@@ -615,10 +615,9 @@ function drawChart(c, height) {
   const ys = (v) => socTop + (1 - v / 100) * (socBot - socTop);
   const b = state.battery;
   const all = [...tl.past, ...tl.future];
-  // Scaled to what actually flowed (load and solar delivered, recorded and projected),
-  // not to the sun available: throttled arrays could give far more than the house
-  // ever draws, and would flatten the load line. Available solar is clipped at the top.
-  const kwMax = niceMax(Math.max(0.5, ...all.map((p) => Math.max(n(p.loadKw) || 0, n(p.pvKw) || 0))));
+  // Scaled to the largest load, solar delivered or solar available seen in the
+  // recorded and projected day, not to what the inverters could do in principle.
+  const kwMax = niceMax(Math.max(0.5, ...all.map((p) => Math.max(n(p.loadKw) || 0, n(p.pvKw) || 0, n(p.availKw) || 0))));
   const yk = (v) => kwBot - (Math.min(v, kwMax) / kwMax) * (kwBot - kwTop);
   c.geo = { x, ys, W, H, socTop, kwBot, from: tl.from, to: tl.to, M };
   const line = (segs, y) => segs.map((s) => `M${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}`).join("");
