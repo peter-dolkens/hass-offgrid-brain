@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.2
+- Live: the timeline's kW scale fits the load and the solar actually delivered
+  (recorded and projected), not the sun available. Throttled arrays could give far
+  more than the house draws, which flattened the load line; available solar is now
+  clipped at the top. Small scales label their ticks to two decimals.
+
 ## 0.18.1
 - Live: the compact timeline takes over earlier, as soon as the full chart's bottom
   edge passes under where the compact one sits. It now animates: the chart shrinks

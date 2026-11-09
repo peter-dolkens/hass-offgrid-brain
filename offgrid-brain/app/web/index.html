@@ -615,7 +615,10 @@ function drawChart(c, height) {
   const ys = (v) => socTop + (1 - v / 100) * (socBot - socTop);
   const b = state.battery;
   const all = [...tl.past, ...tl.future];
-  const kwMax = niceMax(Math.max(1, ...all.map((p) => Math.max(n(p.loadKw) || 0, n(p.availKw) || 0, n(p.pvKw) || 0))));
+  // Scaled to what actually flowed (load and solar delivered, recorded and projected),
+  // not to the sun available: throttled arrays could give far more than the house
+  // ever draws, and would flatten the load line. Available solar is clipped at the top.
+  const kwMax = niceMax(Math.max(0.5, ...all.map((p) => Math.max(n(p.loadKw) || 0, n(p.pvKw) || 0))));
   const yk = (v) => kwBot - (Math.min(v, kwMax) / kwMax) * (kwBot - kwTop);
   c.geo = { x, ys, W, H, socTop, kwBot, from: tl.from, to: tl.to, M };
   const line = (segs, y) => segs.map((s) => `M${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}`).join("");
@@ -623,7 +626,7 @@ function drawChart(c, height) {
   const parts = [];
   // grid (the compact chart keeps only the floors and the hours)
   if (!cp) for (const v of [0, 50, 100]) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${ys(v)}" y2="${ys(v)}" stroke="var(--line)"/>${txt(M.l - 5, ys(v) + 3, `${v}%`, { a: "end", size: 10, fill: "var(--muted)", mono: true })}`);
-  if (!cp) for (const v of [0, kwMax / 2, kwMax]) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${yk(v)}" y2="${yk(v)}" stroke="var(--line)"/>${txt(M.l - 5, yk(v) + 3, `${+v.toFixed(1)}`, { a: "end", size: 10, fill: "var(--muted)", mono: true })}`);
+  if (!cp) for (const v of [0, kwMax / 2, kwMax]) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${yk(v)}" y2="${yk(v)}" stroke="var(--line)"/>${txt(M.l - 5, yk(v) + 3, `${+v.toFixed(2)}`, { a: "end", size: 10, fill: "var(--muted)", mono: true })}`);
   if (!cp) parts.push(txt(M.l + 4, kwTop - 4, "kW", { a: "start", size: 10, fill: "var(--muted)", mono: true }));
   for (const f of floorsOf()) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${ys(f)}" y2="${ys(f)}" stroke="${f === b.reserve_pct ? "var(--reserve)" : "var(--floor)"}" stroke-dasharray="3 4" stroke-width="1"/>`);
   // hours
