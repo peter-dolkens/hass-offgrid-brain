@@ -155,4 +155,13 @@ t("season tracks the southern-hemisphere year like the simulator", () => {
   assert.ok(mk("2026-12-21T12:00:00").season < 0.05, "December = summer ~0");
 });
 
+t("a charge rung below target with no solar left says so, not charging", () => {
+  const pol = { devices: [{ id: "base", kw: 1 }], list: [{ type: "load", dev: "base", cond: "1", gen: true }, { type: "charge", to: 100 }] };
+  const charge = (pv, soc) => decide(pol, ctx({ pv, soc }), LIMITS).trace[1].outcome;
+  assert.strictEqual(charge(0, 70), "below", "draining at night");
+  assert.strictEqual(charge(0.8, 70), "below", "the load took all the solar");
+  assert.strictEqual(charge(3, 70), "charging");
+  assert.strictEqual(charge(0, 100), "full");
+});
+
 console.log(`\n${pass} passed`);

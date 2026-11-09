@@ -83,6 +83,7 @@
   .chip.deficit, .chip.partial { background: var(--warn-bg); color: var(--warn); }
   .chip.idle, .chip.already-served, .chip.unknown-device, .chip.ignored { background: var(--idle-bg); color: var(--idle); }
   .chip.charging { background: var(--charge-bg); color: var(--charge); }
+  .chip.below { background: var(--warn-bg); color: var(--warn); }
   .chip.gen { background: var(--idle-bg); color: var(--muted); margin-left: 6px; font-weight: 600; }
   .split { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--idle-bg); margin-top: 6px; max-width: 280px; }
   .split .pv { background: var(--pv); } .split .batt { background: var(--batt); } .split .short { background: var(--bad); }
@@ -266,12 +267,13 @@ let state = null;
 // ---------- live view ----------
 const OUTCOME = {
   granted: "running", shed: "shed", deficit: "deficit", partial: "lower level", idle: "not needed",
-  "already-served": "already served", charging: "charging", full: "reached", "unknown-device": "unknown device",
+  "already-served": "already served", charging: "charging", below: "below target", full: "reached", "unknown-device": "unknown device",
   ignored: "ignored",
 };
 
 function why(t) {
   if (t.type === "charge") {
+    if (t.outcome === "below") return `Battery below ${t.to}%, but no solar is left at this depth to charge it. Floor for entries below is now ${t.floorPct}%.`;
     return t.outcome === "charging"
       ? `Battery below ${t.to}%: charging at ${watts(t.chargeKw)}. Floor for entries below is now ${t.floorPct}%.`
       : `Battery at or above ${t.to}%. Floor for entries below is now ${t.floorPct}%.`;

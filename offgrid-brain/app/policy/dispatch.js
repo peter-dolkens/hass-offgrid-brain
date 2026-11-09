@@ -82,8 +82,9 @@ function decide(policy, ctx, limits) {
         budgetKw -= ch;                              // charging competes with loads below
       }
       if (e.to > floorPct) floorPct = e.to;          // becomes the floor for everything below
+      // Below the target with nothing left to charge from is "below", not "charging".
       trace.push({ i, type: "charge", to: e.to, chargeKw: ch, floorPct,
-                   outcome: soc < e.to ? "charging" : "full" });
+                   outcome: soc >= e.to ? "full" : ch > 0.001 ? "charging" : "below" });
       continue;
     }
     if (e.type !== "load") { trace.push({ i, type: e.type, outcome: "ignored" }); continue; }
