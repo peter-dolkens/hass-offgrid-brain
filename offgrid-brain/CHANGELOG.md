@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.2
+- Live: the battery inverter ring no longer marks its top rating; the ring's end is
+  the maximum.
+
 ## 0.16.1
 - Live: the load gauge is now **Inverters**, with one ring per inverter.
   - The outer ring is the battery inverter: what it supplies (load minus solar)

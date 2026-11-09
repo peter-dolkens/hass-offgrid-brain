@@ -476,8 +476,9 @@ function loadGauge(m) {
   if (Number.isFinite(share) && Math.abs(share) > 0.005) {
     parts.push(ring(RB, WB - 4, START, Math.max(START + 1.5, ang(Math.abs(share), battMax)), share > 0 ? "var(--load)" : "var(--batt)", ' stroke-linecap="round"'));
   }
+  // The top rating is the ring's end, so it gets no tick of its own.
   let lastLabel = -999;
-  [{ kw: b.inverter_kw, title: `${b.inverter_kw} kW continuous` }, ...ratings.map((r) => ({ kw: r.kw, title: `${r.kw} kW for ${durText(r.seconds)}` }))].forEach((mk, i, all) => {
+  [{ kw: b.inverter_kw, title: `${b.inverter_kw} kW continuous` }, ...ratings.slice(0, -1).map((r) => ({ kw: r.kw, title: `${r.kw} kW for ${durText(r.seconds)}` }))].forEach((mk, i, all) => {
     const deg = ang(mk.kw, battMax), a = (deg * Math.PI) / 180, last = i === all.length - 1;
     const label = deg - lastLabel >= 12 || last;
     if (label) lastLabel = deg;
