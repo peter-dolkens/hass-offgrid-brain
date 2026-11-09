@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.21.3
+- Live: once folded, the timeline's control pill floats over the compact chart's
+  top-left corner. The controls bar's height goes to zero with the scroll and the
+  chart slides up underneath, so the compact card is just the chart.
+
 ## 0.21.2
 - Live: the Loads panel shows the shed count only when something is shed, as it
   already did for held back.

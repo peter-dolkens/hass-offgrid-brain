@@ -58,7 +58,11 @@
   #tl-card.pinned { position: fixed; z-index: 1; }
   #tl-card .tl-foot { overflow: hidden; }
   /* The controls row morphs with --t, 0 (full row) to 1 (pill). */
-  .tl-bar { --t: 0; padding-top: calc(10px - 6px * var(--t)); }
+  /* As it folds, the bar's own height goes to zero (set from the scroll), so the chart
+     slides up underneath and the pill ends up floating over the plot's top-left,
+     nudged right of the axis labels. */
+  .tl-bar { --t: 0; padding-top: calc(10px - 4px * var(--t)); position: relative; z-index: 2; }
+  .tl-full { background: var(--card); box-shadow: 0 2px 10px rgba(0, 0, 0, calc(0.14 * var(--t))); transform: translateX(calc(32px * var(--t))); width: max-content; max-width: 100%; }
   .tl-full { display: flex; flex-wrap: wrap; align-items: center; position: relative; gap: 8px calc(12px - 6px * var(--t));
              padding: calc(2px * var(--t)) calc(5px * var(--t)) calc(2px * var(--t)) calc(10px * var(--t));
              border: 1px solid color-mix(in srgb, var(--line) calc(100% * var(--t)), transparent); border-radius: 999px; }
@@ -843,14 +847,20 @@ function unpin(card) {
   card.classList.remove("pinned");
   for (const k of ["top", "left", "right", "borderRadius", "boxShadow", "paddingLeft", "paddingRight", "paddingBottom"]) card.style[k] = "";
   card.querySelector(".tl-foot").style.cssText = "";
-  card.querySelector(".tl-bar").style.removeProperty("--t");
+  const bar = card.querySelector(".tl-bar");
+  bar.style.removeProperty("--t"); bar.style.height = "";
+  barH0 = null;
 }
 /* The controls fold into the pill over the middle of the shrink (smoothstep), so
    they start folding a little after the card pins and finish a little before it
    reaches its compact height. */
+let barH0 = null;   // the controls bar's height before it starts folding
 function morphBar(card, p) {
   const k = Math.max(0, Math.min(1, (p - 0.15) / 0.7)), t = k * k * (3 - 2 * k);
-  card.querySelector(".tl-bar").style.setProperty("--t", t.toFixed(3));
+  const bar = card.querySelector(".tl-bar");
+  if (barH0 == null) barH0 = bar.offsetHeight;
+  bar.style.setProperty("--t", t.toFixed(3));
+  bar.style.height = `${(barH0 * (1 - t)).toFixed(1)}px`;
 }
 
 function updatePin() {
