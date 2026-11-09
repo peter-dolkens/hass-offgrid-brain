@@ -608,38 +608,50 @@ function drawChart(c, height) {
   if (!tl || !state || state.starting) return;
   const W = Math.max(300, el.clientWidth - (cp ? 0 : 16)), H = cp ? height || MINI_H : W < 560 ? 220 : 250;
   if (!cp) c.fullH = H;
-  const M = cp ? { l: 4, r: 4, t: 3 } : { l: 38, r: 10, t: 10 };
-  const socTop = M.t, socBot = cp ? H * 0.42 : H * 0.42, kwTop = cp ? H * 0.485 : socBot + 28, kwBot = cp ? H * 0.78 : H - 34,
-    shedY = cp ? H * 0.81 : H - 28, axisY = cp ? H - 1 : H - 6, shedH = cp ? Math.max(3, Math.min(6, H * 0.024)) : 6;
+  // One plot: battery % on the left axis and kW on the right, over the same height.
+  const M = cp ? { l: 4, r: 4, t: 3 } : { l: 40, r: 40, t: 14 };
+  const top = M.t, bot = cp ? H * 0.8 : H - 34;
+  const shedY = cp ? H * 0.84 : H - 28, axisY = cp ? H - 1 : H - 6, shedH = cp ? Math.max(3, Math.min(6, H * 0.03)) : 6;
   const x = (t) => M.l + ((t - tl.from) / (tl.to - tl.from)) * (W - M.l - M.r);
-  const ys = (v) => socTop + (1 - v / 100) * (socBot - socTop);
+  const ys = (v) => top + (1 - v / 100) * (bot - top);
   const b = state.battery;
   const all = [...tl.past, ...tl.future];
   // Scaled to the largest load, solar delivered or solar available seen in the
   // recorded and projected day, not to what the inverters could do in principle.
   const kwMax = niceMax(Math.max(0.5, ...all.map((p) => Math.max(n(p.loadKw) || 0, n(p.pvKw) || 0, n(p.availKw) || 0))));
-  const yk = (v) => kwBot - (Math.min(v, kwMax) / kwMax) * (kwBot - kwTop);
-  c.geo = { x, ys, W, H, socTop, kwBot, from: tl.from, to: tl.to, M };
+  const yk = (v) => bot - (Math.min(v, kwMax) / kwMax) * (bot - top);
+  c.geo = { x, ys, W, H, socTop: top, kwBot: bot, from: tl.from, to: tl.to, M };
   const line = (segs, y) => segs.map((s) => `M${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}`).join("");
-  const area = (segs, y) => segs.map((s) => `M${x(s[0][0]).toFixed(1)},${kwBot}L${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}L${x(s[s.length - 1][0]).toFixed(1)},${kwBot}Z`).join("");
+  const area = (segs, y) => segs.map((s) => `M${x(s[0][0]).toFixed(1)},${bot}L${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}L${x(s[s.length - 1][0]).toFixed(1)},${bot}Z`).join("");
   const parts = [];
-  // grid (the compact chart keeps only the floors and the hours)
-  if (!cp) for (const v of [0, 50, 100]) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${ys(v)}" y2="${ys(v)}" stroke="var(--line)"/>${txt(M.l - 5, ys(v) + 3, `${v}%`, { a: "end", size: 10, fill: "var(--muted)", mono: true })}`);
-  if (!cp) for (const v of [0, kwMax / 2, kwMax]) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${yk(v)}" y2="${yk(v)}" stroke="var(--line)"/>${txt(M.l - 5, yk(v) + 3, `${+v.toFixed(2)}`, { a: "end", size: 10, fill: "var(--muted)", mono: true })}`);
-  if (!cp) parts.push(txt(M.l + 4, kwTop - 4, "kW", { a: "start", size: 10, fill: "var(--muted)", mono: true }));
-  for (const f of floorsOf()) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${ys(f)}" y2="${ys(f)}" stroke="${f === b.reserve_pct ? "var(--reserve)" : "var(--floor)"}" stroke-dasharray="3 4" stroke-width="1"/>`);
+  // grid: three lines shared by both axes (the compact chart keeps only the floors and the hours)
+  if (!cp) {
+    for (const q of [0, 0.5, 1]) {
+      const y = top + (1 - q) * (bot - top);
+      parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${y}" y2="${y}" stroke="var(--line)"/>`
+        + txt(M.l - 5, y + 3, `${q * 100}%`, { a: "end", size: 10, fill: "var(--muted)", mono: true })
+        + txt(W - M.r + 5, y + 3, `${+(q * kwMax).toFixed(2)}`, { a: "start", size: 10, fill: "var(--muted)", mono: true }));
+    }
+    parts.push(txt(M.l - 5, top - 5, "battery", { a: "end", size: 9.5, fill: "var(--muted)" }) + txt(W - M.r + 5, top - 5, "kW", { a: "start", size: 9.5, fill: "var(--muted)" }));
+  }
   // hours
   for (let t = Math.ceil(tl.from / HOUR_MS) * HOUR_MS; t <= tl.to; t += HOUR_MS) {
     const h = new Date(t).getHours();
     if (h % (W < 560 ? 12 : 6)) continue;
-    parts.push(`<line x1="${x(t)}" x2="${x(t)}" y1="${socTop}" y2="${shedY + shedH}" stroke="var(--line)" stroke-width="${h ? 1 : 1.5}"/>`
+    parts.push(`<line x1="${x(t)}" x2="${x(t)}" y1="${top}" y2="${shedY + shedH}" stroke="var(--line)" stroke-width="${h ? 1 : 1.5}"/>`
       + (cp ? "" : txt(x(t), axisY, h ? clock(t) : new Date(t).toLocaleDateString([], { weekday: "short" }), { size: 10, fill: "var(--muted)", mono: !!h, w: h ? 400 : 650 })));
   }
-  // series: past solid, projection dashed / faded
-  const draw = (list, gap, proj) => {
-    const op = proj ? ' opacity=".55"' : "", dash = proj ? ' stroke-dasharray="5 4"' : "";
+  // series, layered so the solar areas sit behind the floors and lines.
+  // Past solid, projection dashed / faded.
+  const runs = [[tl.past, 3 * 60 * 1000, false], [tl.future, 31 * 60 * 1000, true]];
+  for (const [list, gap, proj] of runs) {
+    const op = proj ? ' opacity=".55"' : "";
     parts.push(`<path d="${area(segments(list, "availKw", gap), yk)}" fill="var(--solar-av)"${op}/>`);
     parts.push(`<path d="${area(segments(list, "pvKw", gap), yk)}" fill="var(--pv)"${proj ? ' opacity=".45"' : ' opacity=".85"'}/>`);
+  }
+  for (const f of floorsOf()) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${ys(f)}" y2="${ys(f)}" stroke="${f === b.reserve_pct ? "var(--reserve)" : "var(--floor)"}" stroke-dasharray="3 4" stroke-width="1"/>`);
+  for (const [list, gap, proj] of runs) {
+    const op = proj ? ' opacity=".55"' : "", dash = proj ? ' stroke-dasharray="5 4"' : "";
     parts.push(`<path d="${line(segments(list, "loadKw", gap), yk)}" fill="none" stroke="var(--load)" stroke-width="${cp ? 1.5 : 2}" stroke-linejoin="round"${dash}/>`);
     parts.push(`<path d="${line(segments(list, "soc", gap), ys)}" fill="none" stroke="var(--batt)" stroke-width="${cp ? 2 : 2.5}" stroke-linejoin="round"${dash}/>`);
     for (let k = 0; k < list.length; k++) {
@@ -647,12 +659,10 @@ function drawChart(c, height) {
       if (!p.shed || !p.shed.length) continue;
       const t1 = k + 1 < list.length ? Math.min(list[k + 1].t, p.t + gap) : p.t + gap / 2;
       parts.push(`<rect x="${x(p.t)}" y="${shedY}" width="${Math.max(1, x(t1) - x(p.t))}" height="${shedH}" fill="var(--bad)"${op}/>`);
-      if (p.deficit) parts.push(`<rect x="${x(p.t)}" y="${socTop}" width="${Math.max(1, x(t1) - x(p.t))}" height="${socBot - socTop}" fill="var(--bad)" opacity=".08"/>`);
+      if (p.deficit) parts.push(`<rect x="${x(p.t)}" y="${top}" width="${Math.max(1, x(t1) - x(p.t))}" height="${bot - top}" fill="var(--bad)" opacity=".08"/>`);
     }
-  };
-  draw(tl.past, 3 * 60 * 1000, false);
-  draw(tl.future, 31 * 60 * 1000, true);
-  parts.push(`<line x1="${x(tl.now)}" x2="${x(tl.now)}" y1="${socTop - (cp ? 2 : 4)}" y2="${shedY + shedH}" stroke="var(--text)" stroke-width="1.5" stroke-dasharray="2 3"/>`);
+  }
+  parts.push(`<line x1="${x(tl.now)}" x2="${x(tl.now)}" y1="${top - (cp ? 2 : 4)}" y2="${shedY + shedH}" stroke="var(--text)" stroke-width="1.5" stroke-dasharray="2 3"/>`);
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Battery, solar and load over the last and next 24 hours">
     ${parts.join("")}<g class="tl-ph"></g><rect x="${M.l}" y="0" width="${W - M.l - M.r}" height="${H}" fill="transparent"/></svg>`;
   drawPlayhead();

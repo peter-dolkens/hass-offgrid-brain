@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.19.0
+- Live: the timeline is one chart instead of two stacked bands. Battery % reads on
+  the left axis and kW on the right, over the full height, with the solar areas
+  behind the floors, the load and the battery line. The compact scrubber matches.
+
 ## 0.18.3
 - Live: the timeline's kW scale fits the largest load, solar delivered or solar
   available in the recorded and projected day, so available solar is no longer
