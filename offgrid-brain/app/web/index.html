@@ -222,7 +222,7 @@ function renderLive() {
   $("banners").innerHTML = banners.join("");
 
   const i = s.inputs;
-  const src = (r) => `${r.from || "none"} · ${ago(r.ageSec)}`;
+  const src = (r) => `${esc(r.from || "none")} · ${agoEl(r.ageSec)}`;
   const running = s.result.decisions.filter((d) => d.run).length;
   const tiles = [
     ["Battery", `${fmt(i.soc.value)}%`, src(i.soc)],
@@ -236,7 +236,7 @@ function renderLive() {
     ["Devices", `${running} / ${s.result.decisions.length}`, `running · ${s.result.decisions.length - running} shed`],
   ];
   $("tiles").innerHTML = tiles.map(([l, v, sub]) =>
-    `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${esc(sub)}</div></div>`).join("");
+    `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${sub}</div></div>`).join("");
 
   const soc = Number.isFinite(i.soc.value) ? i.soc.value : null;
   const rungs = s.result.trace.filter((t) => t.type === "charge").map((t) => t.to);
@@ -254,7 +254,7 @@ function renderLive() {
 function renderSolar(sol) {
   $("solar-card").hidden = !sol || !sol.arrays || !sol.arrays.length;
   if ($("solar-card").hidden) return;
-  const head = `<div class="vars"><span>irradiance ${fmt(sol.irradiance.value, 0)} W/m² (${sol.irradiance.from}, ${ago(sol.irradiance.ageSec)})</span>
+  const head = `<div class="vars"><span>irradiance ${fmt(sol.irradiance.value, 0)} W/m² (${esc(sol.irradiance.from)}, ${agoEl(sol.irradiance.ageSec)})</span>
     <span>charger ${esc(sol.charger || "—")}</span>
     <span>${sol.unconstrained ? "unthrottled: learning" : "not learning (battery full or near the charge limit)"}</span></div>`;
   const rows = sol.arrays.map((a) => {
@@ -269,11 +269,22 @@ function renderSolar(sol) {
   $("solar").innerHTML = head + rows;
 }
 
+/* An age that keeps counting: the element records WHEN the reading was taken
+   (the tick time minus its age at that tick), and showAge() re-renders it. */
+function agoEl(ageSec) {
+  if (ageSec == null) return "no reading";
+  const at = Date.parse(state.time) - ageSec * 1000;
+  return `<span class="ago" data-at="${at}">${ago(ageSec)}</span>`;
+}
+
 // Ticks every second between refreshes, so it's obvious the page is live.
 function showAge() {
   if (!state || state.starting || !state.time) return;
   const sec = Math.max(0, Math.round((Date.now() - Date.parse(state.time)) / 1000));
   $("age").textContent = `updated ${sec} s ago`;
+  for (const el of document.querySelectorAll(".ago")) {
+    el.textContent = ago(Math.max(0, (Date.now() - Number(el.dataset.at)) / 1000));
+  }
 }
 
 async function refresh() {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.2
+- Panel: every reading's age ("source · N s old") also ticks every second, not
+  just the "updated" time.
+
 ## 0.8.1
 - Panel: "updated N s ago" ticks every second, so it's obvious the view is live.
 - Autonomy is shown in hours: panel tile, log line and the MQTT sensor (now a
