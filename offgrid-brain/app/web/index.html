@@ -57,14 +57,17 @@
      set from the scroll (updatePin). */
   #tl-slot { margin-bottom: 14px; }
   #tl-card { margin-bottom: 0; }
-  #tl-card.pinned { position: fixed; z-index: 1; }
+  /* Pinned, the card sits just under the header with its title hidden, above the
+     header in stacking order so the control pill can glide up into the header. */
+  #tl-card.pinned { position: fixed; z-index: 3; overflow: visible; }
+  #tl-card.pinned > h2 { display: none; }
   #tl-card .tl-foot { overflow: hidden; }
   /* The controls row morphs with --t, 0 (full row) to 1 (pill). */
   /* As it folds, the bar's own height goes to zero (set from the scroll), so the chart
      slides up underneath and the pill ends up floating over the plot's top-left,
      nudged right of the axis labels. */
   .tl-bar { --t: 0; padding-top: calc(10px - 4px * var(--t)); position: relative; z-index: 2; }
-  .tl-full { background: var(--card); box-shadow: 0 2px 10px rgba(0, 0, 0, calc(0.14 * var(--t))); transform: translateX(calc(32px * var(--t))); width: max-content; max-width: 100%; }
+  .tl-full { background: var(--card); box-shadow: 0 2px 10px rgba(0, 0, 0, calc(0.14 * var(--t) * (1 - var(--u, 0)))); width: max-content; max-width: 100%; }
   .tl-full { display: flex; flex-wrap: wrap; align-items: center; position: relative; gap: 8px calc(12px - 6px * var(--t));
              padding: calc(2px * var(--t)) calc(5px * var(--t)) calc(2px * var(--t)) calc(10px * var(--t));
              border: 1px solid color-mix(in srgb, var(--line) calc(100% * var(--t)), transparent); border-radius: 999px; }
@@ -725,13 +728,22 @@ function drawChart(c, height) {
     const op = proj ? ' opacity=".55"' : "", dash = proj ? ' stroke-dasharray="5 4"' : "";
     parts.push(`<path d="${line(segments(list, "loadKw", gap), yk)}" fill="none" stroke="var(--load)" stroke-width="${cp ? 1.5 : 2}" stroke-linejoin="round"${dash}/>`);
     parts.push(`<path d="${line(segments(list, "soc", gap), ys)}" fill="none" stroke="var(--batt)" stroke-width="${cp ? 2 : 2.5}" stroke-linejoin="round"${dash}/>`);
-    for (let k = 0; k < list.length; k++) {
-      const p = list[k];
-      const flagged = p.flagged || p.shed;   // only important loads mark the strip
-      if (!flagged || !flagged.length) continue;
-      const t1 = k + 1 < list.length ? Math.min(list[k + 1].t, p.t + gap) : p.t + gap / 2;
-      parts.push(`<rect x="${x(p.t)}" y="${shedY}" width="${Math.max(1, x(t1) - x(p.t))}" height="${shedH}" fill="var(--bad)"${op}/>`);
-      if (p.deficit) parts.push(`<rect x="${x(p.t)}" y="${top}" width="${Math.max(1, x(t1) - x(p.t))}" height="${bot - top}" fill="var(--bad)" opacity=".08"/>`);
+    // Consecutive samples merge into one bar each: drawn per minute, the seams
+    // between neighbouring slivers show as stripes at fractional sizes.
+    const strip = (test) => {
+      const out = []; let run = null;
+      list.forEach((p, k) => {
+        const t1 = k + 1 < list.length ? Math.min(list[k + 1].t, p.t + gap) : p.t + gap / 2;
+        if (!test(p)) { run = null; return; }
+        if (run && p.t - run[1] <= gap) run[1] = t1; else out.push(run = [p.t, t1]);
+      });
+      return out;
+    };
+    for (const [a, z] of strip((p) => (p.flagged || p.shed || []).length > 0)) {   // only important loads mark the strip
+      parts.push(`<rect x="${x(a).toFixed(1)}" y="${shedY.toFixed(1)}" width="${Math.max(1, x(z) - x(a)).toFixed(1)}" height="${shedH.toFixed(1)}" fill="var(--bad)"${op}/>`);
+    }
+    for (const [a, z] of strip((p) => p.deficit)) {
+      parts.push(`<rect x="${x(a).toFixed(1)}" y="${top.toFixed(1)}" width="${Math.max(1, x(z) - x(a)).toFixed(1)}" height="${(bot - top).toFixed(1)}" fill="var(--bad)" opacity=".08"/>`);
     }
   }
   parts.push(`<line x1="${x(tl.now)}" x2="${x(tl.now)}" y1="${top - (cp ? 2 : 4)}" y2="${shedY + shedH}" stroke="var(--text)" stroke-width="1.5" stroke-dasharray="2 3"/>`);
@@ -843,7 +855,7 @@ for (const el of document.querySelectorAll(".js-now")) el.addEventListener("clic
    window's edges with its content held where it was. The slot keeps the card's
    space in the page, so nothing below moves. One progress value, 0 (just pinned)
    to 1 (compact), drives all of it, so scrolling back reverses it exactly. */
-let pinRaf = 0, footH = null;
+let pinRaf = 0, footH = null, titleH = null;
 function placeMini() {
   if (tip) tip.hidden = true;   // the chart moves under a still pointer, so no pointerleave fires
   if (!pinRaf) pinRaf = requestAnimationFrame(() => { pinRaf = 0; updatePin(); });
@@ -853,19 +865,37 @@ function unpin(card) {
   for (const k of ["top", "left", "right", "borderRadius", "boxShadow", "paddingLeft", "paddingRight", "paddingBottom"]) card.style[k] = "";
   card.querySelector(".tl-foot").style.cssText = "";
   const bar = card.querySelector(".tl-bar");
-  bar.style.removeProperty("--t"); bar.style.height = "";
-  barH0 = null;
+  bar.style.removeProperty("--t"); bar.style.removeProperty("--u"); bar.style.height = "";
+  bar.querySelector(".tl-full").style.transform = "";
+  document.querySelector("body > header #mode").style.marginLeft = "";
+  barH0 = null; titleH = null;
 }
 /* The controls fold into the pill over the middle of the shrink (smoothstep), so
    they start folding a little after the card pins and finish a little before it
    reaches its compact height. */
 let barH0 = null;   // the controls bar's height before it starts folding
+const smooth = (a, b, p) => { const k = Math.max(0, Math.min(1, (p - a) / (b - a))); return k * k * (3 - 2 * k); };
+/* The controls fold into the pill over the middle of the shrink (t), then the pill
+   glides up into the header's empty middle (u), so the compact card is just the
+   chart. Before it reaches the header it floats over the chart's top-left. */
 function morphBar(card, p) {
-  const k = Math.max(0, Math.min(1, (p - 0.15) / 0.7)), t = k * k * (3 - 2 * k);
-  const bar = card.querySelector(".tl-bar");
+  const t = smooth(0.15, 0.85, p), u = smooth(0.55, 1, p);
+  const bar = card.querySelector(".tl-bar"), pill = bar.querySelector(".tl-full");
   if (barH0 == null) barH0 = bar.offsetHeight;
   bar.style.setProperty("--t", t.toFixed(3));
+  bar.style.setProperty("--u", u.toFixed(3));
   bar.style.height = `${(barH0 * (1 - t)).toFixed(1)}px`;
+  // where the pill sits untransformed, and where it's headed in the header
+  const br = bar.getBoundingClientRect();
+  const x0 = br.left + pill.offsetLeft, y0 = br.top + pill.offsetTop;
+  const head = document.querySelector("body > header");
+  // land just right of the title, pushing DRY RUN / LIVE and the version along to make room
+  head.querySelector("#mode").style.marginLeft = `${((pill.offsetWidth + 12) * u).toFixed(1)}px`;
+  const title = head.querySelector("h1").getBoundingClientRect();
+  // centred on the title's row (on a phone the header wraps onto two rows)
+  const x1 = title.right + 12, y1 = title.top + (title.height - pill.offsetHeight) / 2;
+  const dx = 32 * t + (x1 - x0 - 32 * t) * u, dy = (y1 - y0) * u;
+  pill.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`;
 }
 
 let hdr0 = null;   // the header's natural height
@@ -882,8 +912,9 @@ function updatePin() {
   const head = document.querySelector("body > header");
   const hdr = hdr0 != null && head.style.getPropertyValue("--hc") ? hdr0 : head.offsetHeight;
   const slot = $("tl-slot"), card = $("tl-card"), c = CHARTS[0], foot = card.querySelector(".tl-foot");
-  // the title's height (measured, not offsetTop: that is relative to the page until the card is pinned)
-  const barOff = card.querySelector(".tl-bar").getBoundingClientRect().top - card.getBoundingClientRect().top;
+  // the title's height, measured before pinning (pinned, the title is hidden)
+  if (titleH == null || !card.classList.contains("pinned")) titleH = card.querySelector(".tl-bar").getBoundingClientRect().top - card.getBoundingClientRect().top;
+  const barOff = titleH;
   const sr = slot.getBoundingClientRect();
   const scrolled = hdr - sr.top - barOff;                     // how far past the pin point
   if ($("tab-live").hidden || !tl || scrolled <= 0) {
@@ -895,6 +926,7 @@ function updatePin() {
   }
   if (!card.classList.contains("pinned")) {
     slot.style.height = `${card.offsetHeight}px`;             // hold the space before lifting the card out
+    titleH = barOff;
     footH = foot.offsetHeight;
     card.classList.add("pinned");
   }
@@ -905,7 +937,7 @@ function updatePin() {
   const hdrNow = compactHeader(p);
   document.documentElement.style.setProperty("--hdr-h", `${hdrNow}px`);
   Object.assign(card.style, {
-    top: `${hdrNow - barOff}px`, left: `${L * (1 - p)}px`, right: `${R * (1 - p)}px`,
+    top: `${hdrNow}px`, left: `${L * (1 - p)}px`, right: `${R * (1 - p)}px`,
     borderRadius: `0 0 ${10 * (1 - p)}px ${10 * (1 - p)}px`,
     boxShadow: `0 6px 16px rgba(0, 0, 0, ${(0.1 * p).toFixed(3)})`,
     paddingLeft: `${L * p}px`, paddingRight: `${R * p}px`,    // content stays where it was

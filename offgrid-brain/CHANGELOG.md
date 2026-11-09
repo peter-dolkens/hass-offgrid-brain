@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.22.1
+- Live: after folding, the timeline's control pill glides up into the header and
+  settles just right of "Off-Grid Brain", pushing DRY RUN / LIVE and the version
+  along. The compact card is then just the chart. While pinned, the card's title
+  is hidden (it was under the header anyway).
+- Live: the shed and deficit bars are drawn as one solid bar per run instead of
+  one sliver per minute, so they no longer turn stripy mid-transition.
+
 ## 0.22.0
 - Live: the header compacts along with the pinned timeline (less padding, a smaller
   title and tighter tabs: 61 → 43 px), tied to the scroll like the rest. The page
