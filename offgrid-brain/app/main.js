@@ -31,6 +31,7 @@ const { MqttSink, resolveBroker } = require("./sinks/mqtt.js");
 const { decide } = require("./policy/dispatch.js");
 const { buildContext, LoadHistory } = require("./policy/context.js");
 const { Recorder, project, loadProfile, learnOverhead } = require("./policy/timeline.js");
+const { EnergyMeter } = require("./policy/meter.js");
 const { startServer, savePolicy } = require("./web/server.js");
 const VERSION = require("./package.json").version;
 
@@ -89,6 +90,10 @@ async function main() {
   // The Live timeline's last day, one sample a minute. Written every few minutes,
   // not every tick: it's ~200 kB.
   const recorder = Recorder.load(TIMELINE_PATH);
+  // Lifetime battery and load energy, integrated from power (the bridge only has
+  // daily counters, which reset at the SP PRO's midnight).
+  const meter = new EnergyMeter(saved.meter);
+  const startedAt = Date.now();
   let timelineSavedAt = Date.now();
 
   // ---- parts rebuilt when their settings change ------------------------------
@@ -254,6 +259,24 @@ async function main() {
     const loadKw = Number.isFinite(loadEnt.value) && loadEnt.ageSec < STALE_SEC ? loadEnt.value : NaN;
     history.add(now.toISOString().slice(0, 10), loadKw, tickSec);
 
+    // Energy counters for the Energy dashboard. Through the bridge they come from the
+    // brain's own meters, started from the SP PRO's figures for today the first time
+    // so the switch doesn't look like a counter reset. An "ha" battery keeps its entities.
+    let energy = batt.energy;
+    if (battery.source === "bridge") {
+      if (!meter.seeded) {
+        const e = batt.energy || {}, v = (k) => (e[k] && Number.isFinite(e[k].value) ? e[k].value : NaN);
+        const have = ["batteryInKwh", "batteryOutKwh", "loadKwh"].every((k) => Number.isFinite(v(k)));
+        if (have || Date.now() - startedAt > 120 * 1000) {
+          meter.seed({ batteryInKwh: v("batteryInKwh"), batteryOutKwh: v("batteryOutKwh"), loadKwh: v("loadKwh") });
+          log.info(`energy meters started at in ${meter.totals.batteryInKwh.toFixed(3)} / out ${meter.totals.batteryOutKwh.toFixed(3)} / load ${meter.totals.loadKwh.toFixed(3)} kWh`);
+        }
+      }
+      meter.add(now.getTime(), { batteryKw: batt.batteryKw.ageSec < STALE_SEC ? batt.batteryKw.value : NaN, loadKw });
+      const none = { value: NaN, ageSec: Infinity };
+      energy = { ...(batt.energy || {}), ...(meter.seeded ? meter.readings() : { batteryInKwh: none, batteryOutKwh: none, loadKwh: none }) };
+    }
+
     // --- available solar ---
     // Off grid the inverters are throttled to the load once the battery is full,
     // so delivered PV understates the sun. Estimate what each array COULD give
@@ -340,7 +363,7 @@ async function main() {
     if (now - timelineSavedAt >= TIMELINE_SAVE_MS) { recorder.save(TIMELINE_PATH); timelineSavedAt = now.getTime(); }
     snapshot = {
       time: now.toISOString(), version: VERSION, dryRun, safeMode, tickSec, battery,
-      inputs: { soc: socEnt, loadKw: loadEnt, pvKw: pvEnt, batteryKw: batt.source === "none" ? null : batt.batteryKw, energy: batt.energy, inverters: inv },
+      inputs: { soc: socEnt, loadKw: loadEnt, pvKw: pvEnt, batteryKw: batt.source === "none" ? null : batt.batteryKw, energy, inverters: inv },
       splinkSource: settings.splink.enabled ? splink.source : null,
       solar,
       forecast: {
@@ -360,7 +383,7 @@ async function main() {
 
     await actuator.apply(result.decisions);
     mqttSink.publishTick({ ctx, result, safeMode, dryRun, inputs: snapshot.inputs, solar });
-    saveState({ history: history.toJSON(), solar: estimator.toJSON(), updated: now.toISOString() });
+    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), updated: now.toISOString() });
   }
 
   applySettings(settings);
@@ -368,7 +391,7 @@ async function main() {
 
   process.on("SIGTERM", () => {
     log.info("shutting down");
-    saveState({ history: history.toJSON(), solar: estimator.toJSON() });
+    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON() });
     recorder.save(TIMELINE_PATH);
     process.exit(0);
   });

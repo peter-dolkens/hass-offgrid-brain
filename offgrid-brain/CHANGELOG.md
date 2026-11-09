@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.23.0
+- Energy dashboard: battery charged, battery discharged and load energy now come
+  from the brain's own lifetime meters, integrated from the live power readings and
+  kept in /data across restarts, instead of the SP PRO's daily counters. Those tick
+  in ~0.1 kWh steps and reset at the SP PRO's own midnight (an hour off when its
+  clock drifts). Home Assistant read the reset as a counter restart and lost the
+  hour around it. The meters start from the day's SP PRO figures so the switch-over
+  isn't a reset. An `ha` battery keeps using its own entities.
+
 ## 0.22.2
 - Live: colours follow Home Assistant's Energy dashboard. Solar is orange (one
   shade per inverter, pale for sun available), the battery is teal, discharging
