@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.4
+- Live: "not needed" and "already served" dispatch entries have their own Show/Hide
+  buttons.
+
 ## 0.15.3
 - A charge rung below its target with no solar left to charge from is now shown
   as **below target**, not "charging". "Charging" means it's actually taking power.

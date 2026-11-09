@@ -179,7 +179,7 @@
         <span class="legend"><span><i style="background:var(--pv)"></i>solar</span><span><i style="background:var(--batt)"></i>battery</span><span><i style="background:var(--bad)"></i>short</span></span>
       </h2>
       <div id="list"><div class="empty">Waiting for the first tick…</div></div>
-      <div class="actions" id="served-bar" hidden><button class="btn" id="served-toggle"></button></div>
+      <div class="actions" id="quiet-bar" hidden><button class="btn" id="idle-toggle"></button><button class="btn" id="served-toggle"></button></div>
     </div>
     <div class="card">
       <h2>Context <span class="muted">The variables the list's conditions saw on this tick.</span></h2>
@@ -309,7 +309,7 @@ function renderRow(t) {
     <div><span class="chip ${t.outcome}">${OUTCOME[t.outcome] || t.outcome}</span></div></div>`;
 }
 
-let showQuiet = false;
+let showIdle = false, showServed = false;
 function renderLive() {
   const s = state;
   $("mode").className = `badge ${s.dryRun ? "dry" : "live"}`;
@@ -330,14 +330,16 @@ function renderLive() {
   renderGauges();
   // Entries that aren't asking to run, or that an earlier entry already served,
   // change nothing, so they're hidden unless asked for.
-  const quiet = (t) => t.outcome === "already-served" || t.outcome === "idle";
   const count = (o) => s.result.trace.filter((t) => t.outcome === o).length;
-  const hidden = [[count("idle"), "not needed"], [count("already-served"), "already served"]].filter(([k]) => k);
-  const rows = showQuiet ? s.result.trace : s.result.trace.filter((t) => !quiet(t));
+  const idle = count("idle"), served = count("already-served");
+  const rows = s.result.trace.filter((t) => (t.outcome !== "idle" || showIdle) && (t.outcome !== "already-served" || showServed));
   $("list").innerHTML = rows.length ? rows.map(renderRow).join("")
     : `<div class="empty">${s.result.trace.length ? "Nothing in the list is asking to run." : "The list is empty."}</div>`;
-  $("served-bar").hidden = !hidden.length;
-  $("served-toggle").textContent = `${showQuiet ? "Hide" : "Show"} ${hidden.map(([k, l]) => `${k} ${l}`).join(" and ")}`;
+  $("quiet-bar").hidden = !idle && !served;
+  $("idle-toggle").hidden = !idle;
+  $("idle-toggle").textContent = `${showIdle ? "Hide" : "Show"} ${idle} not needed`;
+  $("served-toggle").hidden = !served;
+  $("served-toggle").textContent = `${showServed ? "Hide" : "Show"} ${served} already served`;
   $("vars").innerHTML = Object.entries(s.ctx).map(([k, v]) =>
     `<span>${k}=${typeof v === "number" ? (Number.isInteger(v) ? v : v.toFixed(2)) : esc(v)}</span>`).join("");
 }
@@ -610,7 +612,8 @@ $("tl-play").addEventListener("click", () => {
   playing = true; lastFrame = 0;
   requestAnimationFrame(frame);
 });
-$("served-toggle").addEventListener("click", () => { showQuiet = !showQuiet; renderLive(); });
+$("idle-toggle").addEventListener("click", () => { showIdle = !showIdle; renderLive(); });
+$("served-toggle").addEventListener("click", () => { showServed = !showServed; renderLive(); });
 $("tl-now").addEventListener("click", () => { playing = false; view = null; renderGauges(); drawPlayhead(); });
 
 async function refreshTimeline() {
