@@ -50,12 +50,13 @@
   .seg button { font: inherit; font-size: 12px; font-weight: 600; border: 0; background: var(--card); color: var(--muted); padding: 6px 9px; cursor: pointer; font-variant-numeric: tabular-nums; }
   .seg button.on { background: var(--accent); color: #fff; }
   .seg button:focus-visible, .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .tl-mini { position: fixed; left: 0; right: 0; top: var(--hdr-h, 56px); z-index: 2; background: var(--card); border-bottom: 1px solid var(--line);
-             box-shadow: 0 6px 16px rgba(0, 0, 0, .08); }
-  .tl-mini-in { max-width: 1100px; margin: 0 auto; padding: 0 16px 6px; }
-  .tl-mini .tl-bar { padding: 6px 0 0; }
-  .tl-mini .btn { padding: 4px 10px; }
-  .tl-mini .tl-chart { padding: 2px 0 0; }
+  /* The timeline card pins under the header (z-index below it, so its title slides
+     away underneath). Its edges, corners, shadow, side padding and legend height are
+     set from the scroll (updatePin). */
+  #tl-slot { margin-bottom: 14px; }
+  #tl-card { margin-bottom: 0; }
+  #tl-card.pinned { position: fixed; z-index: 1; }
+  #tl-card .tl-foot { overflow: hidden; }
 
   .tl-chart svg, .gauges svg { display: block; width: 100%; height: auto; overflow: visible; }
   .gauges svg { max-width: 260px; margin: 0 auto; }
@@ -160,23 +161,11 @@
   <nav><button data-tab="live" class="on">Live</button><button data-tab="policy">Policy</button><button data-tab="settings">Settings</button></nav>
 </header>
 
-<!-- The timeline, compact, pinned under the header once the full one scrolls away. -->
-<div class="tl-mini" id="tl-mini" hidden>
-  <div class="tl-mini-in">
-    <div class="tl-bar">
-      <button class="btn js-play" aria-label="Replay the recorded day">▶ Replay</button>
-      <span class="seg js-speed" role="group" aria-label="Replay speed"><button data-speed="60">60×</button><button data-speed="600">600×</button><button data-speed="900">900×</button></span>
-      <button class="btn js-now" hidden>Back to now</button>
-      <span class="tl-time js-time">now</span>
-    </div>
-    <div class="tl-chart" id="tl-mini-chart"></div>
-  </div>
-</div>
-
 <main>
   <section id="tab-live">
     <div id="banners"></div>
-    <div class="card">
+    <!-- The slot keeps the card's place in the page while the card itself is pinned. -->
+    <div id="tl-slot"><div class="card" id="tl-card">
       <h2>Timeline <span class="muted">The last 24 h as the brain recorded it, and the next 24 h projected from the solar forecast and the last day's load. Click or drag to look at any moment.</span></h2>
       <div class="tl-bar">
         <button class="btn js-play" aria-label="Replay the recorded day">▶ Replay</button>
@@ -192,7 +181,7 @@
         <span><i style="background:var(--solar-av)"></i>solar available</span><span><i style="background:var(--load)"></i>load</span>
         <span><i style="background:var(--bad)"></i>important loads shed</span><span>dashed = projected</span>
       </div>
-    </div>
+    </div></div>
     <div class="gauges">
       <div class="panel"><h3>Battery <span class="when" id="g-when-b"></span></h3><div id="g-batt"></div>
         <div class="legend"><span><i style="background:var(--batt)"></i>charge / charging</span><span><i style="background:var(--load)"></i>discharging</span><span><i style="background:var(--floor)"></i>floors</span></div></div>
@@ -482,7 +471,8 @@ function inverterRings(m) {
   const cap = (a) => (a.acKw > 0 ? a.acKw : a.kwp > 0 ? a.kwp : 10);
   const capSum = arrays.reduce((t, a) => t + cap(a), 0) || 1;
   const live = view == null;
-  const solar = arrays.map((a) => ({
+  // A moment being animated carries its own per-inverter values.
+  const solar = m.arrays || arrays.map((a) => ({
     name: a.name, max: cap(a),
     kw: live ? n(a.kw) : (n(m.pvKw) * cap(a)) / capSum,
     avail: live ? n(a.availableKw) : (n(Number.isFinite(m.availKw) ? m.availKw : m.pvKw) * cap(a)) / capSum,
@@ -571,13 +561,46 @@ function loadsPanel(m) {
     <div class="loads">${rows || '<div class="muted">No loads in the policy.</div>'}</div>`;
 }
 
+/* The battery and inverter gauges glide to a new reading instead of snapping:
+   every number they draw is eased from what's on screen to the new moment. A
+   reading that lands mid-glide starts from wherever the glide had got to. During
+   replay the moments are already a smooth sequence, so they're drawn as they come. */
+let shownM = null, gaugeAnim = 0;
+const TWEEN = ["soc", "battKw", "loadKw", "pvKw", "availKw"];
+const tw = (a, b, e) => (Number.isFinite(a) && Number.isFinite(b) ? a + (b - a) * e : b);
+function lerpMoment(a, b, e) {
+  const o = { ...b };
+  for (const k of TWEEN) o[k] = tw(a[k], b[k], e);
+  if (a.arrays && b.arrays && a.arrays.length === b.arrays.length) {
+    o.arrays = b.arrays.map((x, i) => ({ ...x, kw: tw(a.arrays[i].kw, x.kw, e), avail: tw(a.arrays[i].avail, x.avail, e) }));
+  }
+  return o;
+}
+function drawGauges(m) {
+  $("g-batt").innerHTML = batteryGauge(m);
+  $("g-load").innerHTML = loadGauge(m);
+}
+function tweenGauges(m) {
+  if (gaugeAnim) cancelAnimationFrame(gaugeAnim);
+  gaugeAnim = 0;
+  if (!shownM || playing || window.matchMedia("(prefers-reduced-motion: reduce)").matches) { shownM = m; drawGauges(m); return; }
+  const from = shownM, t0 = performance.now(), D = dragging ? 140 : 450;
+  const step = (now) => {
+    const k = Math.max(0, Math.min(1, (now - t0) / D)), e = 1 - (1 - k) ** 3;
+    shownM = k < 1 ? lerpMoment(from, m, e) : m;
+    drawGauges(shownM);
+    gaugeAnim = k < 1 ? requestAnimationFrame(step) : 0;
+  };
+  gaugeAnim = requestAnimationFrame(step);
+}
+
 function renderGauges() {
   const m = momentAt(view);
   if (!m) return;
   const when = view == null ? "" : `${m.projected ? "projected " : ""}${dayClock(view)}`;
   for (const id of ["g-when-b", "g-when-l", "g-when-d"]) $(id).textContent = when;
-  $("g-batt").innerHTML = batteryGauge(m);
-  $("g-load").innerHTML = loadGauge(m);
+  m.arrays = inverterRings(m).solar;
+  tweenGauges(m);
   $("g-loads").innerHTML = loadsPanel(m);
   const arrays = (state.solar && state.solar.arrays) || [];
   $("g-arrays").innerHTML = view != null ? (m.projected ? "Solar from the forecast; load repeats the last day's." : "")
@@ -591,7 +614,7 @@ function renderGauges() {
 /* Two copies of the chart: the full one in its card, and a compact one (about a
    quarter of the height) pinned under the header once the full one scrolls away.
    Each keeps the scales it was last drawn with, for its playhead and pointer. */
-const CHARTS = [{ id: "tl-chart", compact: false, geo: null }, { id: "tl-mini-chart", compact: true, geo: null }];
+const CHARTS = [{ id: "tl-chart", geo: null, h: null }];
 function segments(list, key, maxGap) {
   const out = []; let cur = [];
   for (const p of list) {
@@ -604,20 +627,23 @@ function segments(list, key, maxGap) {
 }
 const MINI_H = 64;
 function drawTimeline() {
-  for (const c of CHARTS) if (!c.compact || !$("tl-mini").hidden) drawChart(c, c.h);
+  for (const c of CHARTS) drawChart(c, c.h);
 }
 /* The compact chart scales its bands with its height, so the shrink animation can
    redraw it at any height between the full chart's and MINI_H. */
 function drawChart(c, height) {
-  const el = $(c.id), cp = c.compact;
+  const el = $(c.id);
   if (!tl || !state || state.starting) return;
-  const W = Math.max(300, el.clientWidth - (cp ? 0 : 16)), H = cp ? height || MINI_H : W < 560 ? 220 : 250;
-  if (!cp) c.fullH = H;
+  const W = Math.max(300, el.clientWidth - 16), natural = W < 560 ? 220 : 250, H = height || natural;
+  c.fullH = natural;
+  // The layout morphs with the height: q = 1 at full size, 0 at the compact strip.
+  // Hour labels, the middle grid line and the axis titles fade out as it shrinks.
+  const q = Math.max(0, Math.min(1, (H - MINI_H) / (natural - MINI_H))), mix = (a, b) => a + (b - a) * q;
+  const cp = q < 0.5;
   // One plot: battery % on the left axis and kW on the right, over the same height.
-  // Both charts share the side margins, so time lines up as one morphs into the other.
-  const M = cp ? { l: 40, r: 40, t: 6 } : { l: 40, r: 40, t: 14 };
-  const top = M.t, bot = cp ? H * 0.8 : H - 34;
-  const shedY = cp ? H * 0.84 : H - 28, axisY = cp ? H - 1 : H - 6, shedH = cp ? Math.max(3, Math.min(6, H * 0.03)) : 6;
+  const M = { l: 40, r: 40, t: mix(6, 14) };
+  const top = M.t, bot = mix(H * 0.8, H - 34);
+  const shedY = mix(H * 0.84, H - 28), axisY = H - 6, shedH = mix(3, 6);
   const x = (t) => M.l + ((t - tl.from) / (tl.to - tl.from)) * (W - M.l - M.r);
   const ys = (v) => top + (1 - v / 100) * (bot - top);
   const b = state.battery;
@@ -630,28 +656,22 @@ function drawChart(c, height) {
   const line = (segs, y) => segs.map((s) => `M${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}`).join("");
   const area = (segs, y) => segs.map((s) => `M${x(s[0][0]).toFixed(1)},${bot}L${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}L${x(s[s.length - 1][0]).toFixed(1)},${bot}Z`).join("");
   const parts = [];
-  // grid: three lines shared by both axes; the compact chart labels just the ends of each axis
-  if (cp) {
-    for (const q of [0, 1]) {
-      const y = top + (1 - q) * (bot - top);
-      parts.push(txt(M.l - 5, y + 3, `${q * 100}%`, { a: "end", size: 9, fill: "var(--muted)", mono: true })
-        + txt(W - M.r + 5, y + 3, q ? `${+kwMax.toFixed(2)} kW` : "0", { a: "start", size: 9, fill: "var(--muted)", mono: true }));
-    }
-  } else {
-    for (const q of [0, 0.5, 1]) {
-      const y = top + (1 - q) * (bot - top);
-      parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${y}" y2="${y}" stroke="var(--line)"/>`
-        + txt(M.l - 5, y + 3, `${q * 100}%`, { a: "end", size: 10, fill: "var(--muted)", mono: true })
-        + txt(W - M.r + 5, y + 3, `${+(q * kwMax).toFixed(2)}`, { a: "start", size: 10, fill: "var(--muted)", mono: true }));
-    }
-    parts.push(txt(M.l - 5, top - 5, "battery", { a: "end", size: 9.5, fill: "var(--muted)" }) + txt(W - M.r + 5, top - 5, "kW", { a: "start", size: 9.5, fill: "var(--muted)" }));
+  // grid: lines shared by both axes; both ends are always labelled
+  const fade = (o, html) => (o > 0.02 ? `<g opacity="${o.toFixed(2)}">${html}</g>` : "");
+  for (const g of [0, 0.5, 1]) {
+    const y = top + (1 - g) * (bot - top);
+    const html = `<line x1="${M.l}" x2="${W - M.r}" y1="${y}" y2="${y}" stroke="var(--line)"/>`
+      + txt(M.l - 5, y + 3, `${g * 100}%`, { a: "end", size: 10, fill: "var(--muted)", mono: true })
+      + txt(W - M.r + 5, y + 3, g === 1 && cp ? `${+kwMax.toFixed(2)} kW` : `${+(g * kwMax).toFixed(2)}`, { a: "start", size: 10, fill: "var(--muted)", mono: true });
+    parts.push(g === 0.5 ? fade(q, html) : html);
   }
+  parts.push(fade(q, txt(M.l - 5, top - 5, "battery", { a: "end", size: 9.5, fill: "var(--muted)" }) + txt(W - M.r + 5, top - 5, "kW", { a: "start", size: 9.5, fill: "var(--muted)" })));
   // hours
   for (let t = Math.ceil(tl.from / HOUR_MS) * HOUR_MS; t <= tl.to; t += HOUR_MS) {
     const h = new Date(t).getHours();
     if (h % (W < 560 ? 12 : 6)) continue;
     parts.push(`<line x1="${x(t)}" x2="${x(t)}" y1="${top}" y2="${shedY + shedH}" stroke="var(--line)" stroke-width="${h ? 1 : 1.5}"/>`
-      + (cp ? "" : txt(x(t), axisY, h ? clock(t) : new Date(t).toLocaleDateString([], { weekday: "short" }), { size: 10, fill: "var(--muted)", mono: !!h, w: h ? 400 : 650 })));
+      + fade(q, txt(x(t), axisY, h ? clock(t) : new Date(t).toLocaleDateString([], { weekday: "short" }), { size: 10, fill: "var(--muted)", mono: !!h, w: h ? 400 : 650 })));
   }
   // series, layered so the solar areas sit behind the floors and lines.
   // Past solid, projection dashed / faded.
@@ -687,8 +707,9 @@ function drawPlayhead() {
     const g = $(c.id).querySelector(".tl-ph"), geo = c.geo;
     if (!g || !geo) continue;
     const X = geo.x(Math.max(geo.from, Math.min(geo.to, t)));
-    g.innerHTML = `<line x1="${X}" x2="${X}" y1="${geo.socTop - (c.compact ? 2 : 6)}" y2="${geo.kwBot + (c.compact ? 4 : 10)}" stroke="var(--accent)" stroke-width="2"/>
-      ${m && Number.isFinite(m.soc) ? `<circle cx="${X}" cy="${geo.ys(m.soc)}" r="${c.compact ? 3.5 : 5}" fill="var(--batt)" stroke="var(--card)" stroke-width="2"/>` : ""}`;
+    const small = geo.H < 120;
+    g.innerHTML = `<line x1="${X}" x2="${X}" y1="${geo.socTop - (small ? 2 : 6)}" y2="${geo.kwBot + (small ? 4 : 10)}" stroke="var(--accent)" stroke-width="2"/>
+      ${m && Number.isFinite(m.soc) ? `<circle cx="${X}" cy="${geo.ys(m.soc)}" r="${small ? 3.5 : 5}" fill="var(--batt)" stroke="var(--card)" stroke-width="2"/>` : ""}`;
   }
 }
 
@@ -765,25 +786,54 @@ $("idle-toggle").addEventListener("click", () => { showIdle = !showIdle; renderL
 $("served-toggle").addEventListener("click", () => { showServed = !showServed; renderLive(); });
 for (const el of document.querySelectorAll(".js-now")) el.addEventListener("click", () => { playing = false; view = null; renderGauges(); drawPlayhead(); });
 
-/* The compact timeline is tied to the scroll, not to a timer. It appears as the full
-   chart starts to slide under the header, at the height of what's still visible of
-   it, and shrinks as you scroll until it reaches MINI_H; scrolling back up grows it
-   again until the full chart is clear of the header and it goes away. */
-let miniRaf = 0;
+/* The timeline card itself pins and shrinks, tied to the scroll. While its controls
+   are below the header it scrolls normally. Once they reach the header the card is
+   fixed there (its title tucked under the header) and, as the page keeps scrolling,
+   the chart redraws shorter, the legend folds away and the card widens to the
+   window's edges with its content held where it was. The slot keeps the card's
+   space in the page, so nothing below moves. One progress value, 0 (just pinned)
+   to 1 (compact), drives all of it, so scrolling back reverses it exactly. */
+let pinRaf = 0, footH = null;
 function placeMini() {
-  if (!miniRaf) miniRaf = requestAnimationFrame(() => { miniRaf = 0; updateMini(); });
+  if (!pinRaf) pinRaf = requestAnimationFrame(() => { pinRaf = 0; updatePin(); });
 }
-function updateMini() {
+function unpin(card) {
+  card.classList.remove("pinned");
+  for (const k of ["top", "left", "right", "borderRadius", "boxShadow", "paddingLeft", "paddingRight", "paddingBottom"]) card.style[k] = "";
+  card.querySelector(".tl-foot").style.cssText = "";
+}
+function updatePin() {
   const hdr = document.querySelector("body > header").offsetHeight;
-  document.documentElement.style.setProperty("--hdr-h", `${hdr}px`);
-  const mini = $("tl-mini"), c = CHARTS[1];
-  const r = $("tl-chart").getBoundingClientRect();
-  if ($("tab-live").hidden || !tl || r.top >= hdr) { mini.hidden = true; c.h = null; return; }
-  const wasHidden = mini.hidden;
-  mini.hidden = false;
-  const bar = mini.querySelector(".tl-bar").offsetHeight;
-  const h = Math.round(Math.max(MINI_H, Math.min(CHARTS[0].fullH || 250, r.bottom - hdr - bar - 6)));
-  if (wasHidden || h !== c.h) { c.h = h; drawChart(c, h); drawPlayhead(); }
+  const slot = $("tl-slot"), card = $("tl-card"), c = CHARTS[0], foot = card.querySelector(".tl-foot");
+  // the title's height (measured, not offsetTop: that is relative to the page until the card is pinned)
+  const barOff = card.querySelector(".tl-bar").getBoundingClientRect().top - card.getBoundingClientRect().top;
+  const sr = slot.getBoundingClientRect();
+  const scrolled = hdr - sr.top - barOff;                     // how far past the pin point
+  if ($("tab-live").hidden || !tl || scrolled <= 0) {
+    if (card.classList.contains("pinned") || c.h) { unpin(card); c.h = null; drawChart(c); }
+    slot.style.height = "";
+    footH = null;
+    return;
+  }
+  if (!card.classList.contains("pinned")) {
+    slot.style.height = `${card.offsetHeight}px`;             // hold the space before lifting the card out
+    footH = foot.offsetHeight;
+    card.classList.add("pinned");
+  }
+  const full = c.fullH || 250;
+  const h = Math.round(Math.max(MINI_H, full - scrolled));
+  const p = full > MINI_H ? (full - h) / (full - MINI_H) : 1;
+  const L = sr.left, R = document.documentElement.clientWidth - sr.right;
+  Object.assign(card.style, {
+    top: `${hdr - barOff}px`, left: `${L * (1 - p)}px`, right: `${R * (1 - p)}px`,
+    borderRadius: `0 0 ${10 * (1 - p)}px ${10 * (1 - p)}px`,
+    boxShadow: `0 6px 16px rgba(0, 0, 0, ${(0.1 * p).toFixed(3)})`,
+    paddingLeft: `${L * p}px`, paddingRight: `${R * p}px`,    // content stays where it was
+    paddingBottom: `${4 * p}px`,
+  });
+  Object.assign(foot.style, { height: `${(footH || 0) * (1 - p)}px`, opacity: String(1 - p),
+    paddingTop: `${6 * (1 - p)}px`, paddingBottom: `${12 * (1 - p)}px` });
+  if (h !== c.h) { c.h = h; drawChart(c, h); drawPlayhead(); }
 }
 window.addEventListener("scroll", placeMini, { passive: true });
 

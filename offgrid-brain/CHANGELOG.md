@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.20.1
+- Live: the timeline card itself now pins and shrinks; the separate pinned copy is
+  gone. When its controls reach the header they stay put. As you scroll on, the
+  chart redraws shorter (hour labels and the middle grid line fade out, both axes
+  keep their end labels), the legend folds away and the card widens to the
+  window's edges, all tied to the scroll and reversing exactly as you scroll up.
+- Live: the battery and inverter gauges glide to each new reading instead of
+  snapping (quicker while you drag the timeline; drawn directly during replay and
+  with reduced motion).
+
 ## 0.20.0
 - **Important and convenience loads.** Loads are important unless marked
   `"important": false` (the new **Important** column in Settings → Loads), and a
