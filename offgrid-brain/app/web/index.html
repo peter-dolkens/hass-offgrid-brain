@@ -56,8 +56,7 @@
   .tl-mini .tl-bar { padding: 6px 0 0; }
   .tl-mini .btn { padding: 4px 10px; }
   .tl-mini .tl-chart { padding: 2px 0 0; }
-  @media (prefers-reduced-motion: no-preference) { .tl-mini:not([hidden]) { animation: tl-drop .18s ease-out; } }
-  @keyframes tl-drop { from { transform: translateY(-12px); opacity: 0; } to { transform: none; opacity: 1; } }
+
   .tl-chart svg, .gauges svg { display: block; width: 100%; height: auto; overflow: visible; }
   .gauges svg { max-width: 260px; margin: 0 auto; }
   .tl-foot { display: flex; gap: 6px 14px; flex-wrap: wrap; padding: 6px 14px 12px; font-size: 12px; color: var(--muted); }
@@ -598,16 +597,20 @@ function segments(list, key, maxGap) {
   if (cur.length) out.push(cur);
   return out;
 }
+const MINI_H = 64;
 function drawTimeline() {
-  for (const c of CHARTS) if (!c.compact || !$("tl-mini").hidden) drawChart(c);
+  for (const c of CHARTS) if (!c.compact || (!$("tl-mini").hidden && !miniAnim)) drawChart(c);
 }
-function drawChart(c) {
+/* The compact chart scales its bands with its height, so the shrink animation can
+   redraw it at any height between the full chart's and MINI_H. */
+function drawChart(c, height) {
   const el = $(c.id), cp = c.compact;
   if (!tl || !state || state.starting) return;
-  const W = Math.max(300, el.clientWidth - (cp ? 0 : 16)), H = cp ? 64 : W < 560 ? 220 : 250;
+  const W = Math.max(300, el.clientWidth - (cp ? 0 : 16)), H = cp ? height || MINI_H : W < 560 ? 220 : 250;
+  if (!cp) c.fullH = H;
   const M = cp ? { l: 4, r: 4, t: 3 } : { l: 38, r: 10, t: 10 };
-  const socTop = M.t, socBot = cp ? 27 : H * 0.42, kwTop = cp ? 31 : socBot + 28, kwBot = cp ? 50 : H - 34,
-    shedY = cp ? 52 : H - 28, axisY = cp ? H - 1 : H - 6, shedH = cp ? 3 : 6;
+  const socTop = M.t, socBot = cp ? H * 0.42 : H * 0.42, kwTop = cp ? H * 0.485 : socBot + 28, kwBot = cp ? H * 0.78 : H - 34,
+    shedY = cp ? H * 0.81 : H - 28, axisY = cp ? H - 1 : H - 6, shedH = cp ? Math.max(3, Math.min(6, H * 0.024)) : 6;
   const x = (t) => M.l + ((t - tl.from) / (tl.to - tl.from)) * (W - M.l - M.r);
   const ys = (v) => socTop + (1 - v / 100) * (socBot - socTop);
   const b = state.battery;
@@ -737,14 +740,36 @@ $("idle-toggle").addEventListener("click", () => { showIdle = !showIdle; renderL
 $("served-toggle").addEventListener("click", () => { showServed = !showServed; renderLive(); });
 for (const el of document.querySelectorAll(".js-now")) el.addEventListener("click", () => { playing = false; view = null; renderGauges(); drawPlayhead(); });
 
-// The compact timeline appears once the full one has scrolled up under the header.
+/* The compact timeline takes over as soon as the full chart's bottom edge passes
+   under where the compact one sits. Showing it, the chart shrinks from the full
+   chart's height to MINI_H; hiding it, it grows back and fades. */
+let miniAnim = null, miniShown = false;
 function placeMini() {
   const hdr = document.querySelector("body > header").offsetHeight;
   document.documentElement.style.setProperty("--hdr-h", `${hdr}px`);
-  const show = !$("tab-live").hidden && !!tl && $("tl-chart").getBoundingClientRect().bottom < hdr;
-  if (show === !$("tl-mini").hidden) return;
-  $("tl-mini").hidden = !show;
-  if (show) { drawChart(CHARTS[1]); drawPlayhead(); }
+  const bar = $("tl-mini").querySelector(".tl-bar").offsetHeight || 44;
+  const show = !$("tab-live").hidden && !!tl && $("tl-chart").getBoundingClientRect().bottom < hdr + bar + MINI_H + 8;
+  if (show !== miniShown) animateMini(show);
+}
+function animateMini(show) {
+  miniShown = show;
+  if (miniAnim) cancelAnimationFrame(miniAnim);
+  const mini = $("tl-mini"), full = CHARTS[0].fullH || 250;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const from = show ? full : MINI_H, to = show ? MINI_H : full, D = reduce ? 0 : 260, t0 = performance.now();
+  mini.hidden = false;
+  const step = (now) => {
+    // A frame's timestamp can precede t0 slightly, so clamp the progress to 0..1.
+    const k = D ? Math.max(0, Math.min(1, (now - t0) / D)) : 1, e = 1 - (1 - k) ** 3;   // ease out
+    drawChart(CHARTS[1], from + (to - from) * e);
+    drawPlayhead();
+    mini.style.opacity = show ? String(Math.min(1, 0.4 + e)) : String(1 - e);
+    if (k < 1) { miniAnim = requestAnimationFrame(step); return; }
+    miniAnim = null;
+    mini.style.opacity = "";
+    if (!show) mini.hidden = true;
+  };
+  miniAnim = requestAnimationFrame(step);
 }
 window.addEventListener("scroll", placeMini, { passive: true });
 

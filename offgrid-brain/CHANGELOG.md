@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.1
+- Live: the compact timeline takes over earlier, as soon as the full chart's bottom
+  edge passes under where the compact one sits. It now animates: the chart shrinks
+  from full height to the compact strip, and grows back and fades as you scroll up
+  (instant with reduced motion).
+
 ## 0.18.0
 - Live: replay at **60×, 600× or 900×** (1, 10 or 15 minutes of history a
   second). The panel remembers the choice in your browser.
