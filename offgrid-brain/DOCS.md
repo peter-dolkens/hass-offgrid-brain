@@ -16,10 +16,11 @@ in the simulator is the policy that executes.
 
 1. Settings → Add-ons → Add-on Store → ⋮ → **Repositories** → add
    `https://github.com/peter-dolkens/hass-offgrid-brain`.
-2. Install **Off-Grid Brain**, open **Configuration**, and set up a battery SoC
-   source (`splink` or `sources.battery_soc`).
-3. Start it. **It ships with `dry_run: true`**: it decides and logs, and touches
-   nothing. Watch the log until you trust it, then turn `dry_run` off.
+2. Install and start **Off-Grid Brain**, then open its panel in the sidebar.
+3. In **Settings**, set up a battery SoC source (the SP PRO bridge, or a Home
+   Assistant entity) and your devices. **It starts in dry run**: it decides and
+   logs, and touches nothing. Watch it until you trust it, then turn dry run off
+   in Settings (it asks you to confirm).
 
 ## The panel
 
@@ -39,6 +40,20 @@ The add-on adds **Off-Grid Brain** to the Home Assistant sidebar (Ingress, admin
 The panel loads nothing from the internet, so it works when the site's connection is down.
 
 ## Configuration
+
+Almost everything is configured from the panel's **Settings** tab and applies
+immediately, without a restart. Readings are chosen with **entity pickers**
+filtered to suitable Home Assistant entities, showing each one's name, area and
+current value. Settings are stored in `/config/settings.json` (previous version
+kept as `.bak`). Devices are edited in the same tab and stored with the dispatch
+list in `/config/policy.json`. The YAML below shows the same keys as they appear
+in `settings.json`.
+
+The add-on's own **Configuration** screen keeps only the log level and the secrets:
+the MQTT connection and the Cloudflare Access token. Before 0.9.0 everything lived
+there. On first start, 0.9.0 copies those options into `settings.json`, and device
+switches into `policy.json`, so an existing install keeps its setup. The old option
+fields are ignored after that and will be removed in a later release.
 
 ### Where readings come from
 
@@ -139,17 +154,19 @@ It needs a solar sensor on the gateway, such as a WS90.
 Every entity is optional and may be left blank. An entity that doesn't resolve reads
 as unavailable.
 
-### `devices`: what the brain may switch
+### Devices: what the brain may switch
 
-```yaml
-devices:
-  - id: ev                      # must match a device id in policy.json
-    name: EV charger
-    kw: 7.0                     # nameplate draw used for the power budget
-    switch: switch.ev_contactor # omit to make the device advisory-only
-    power_sensor: sensor.ev_power
-    min_dwell_seconds: 600      # minimum time between state changes
+Edited in Settings → Devices and stored in `policy.json`:
+
+```json
+{ "id": "ev", "name": "EV charger", "kw": 7.0,
+  "switch": "switch.ev_contactor", "power_sensor": "sensor.ev_power", "min_dwell_seconds": 600 }
 ```
+
+`kw` is the nameplate draw used for the power budget. The switch can be a
+`switch`, `input_boolean`, `light`, `fan`, `climate`, `water_heater` or
+`humidifier` entity; leave it empty to make the device advisory-only.
+`min_dwell_seconds` (default 300) is the minimum time between state changes.
 
 A device with no `switch` is **advisory only**: the brain reasons about its power
 but never actuates it. Use that for anything not yet wired.
@@ -181,7 +198,7 @@ Known GEN24 limitations:
 - When an off-grid battery inverter curtails them they become load-following, so
   `PAC` is *delivered* power, not available solar.
 
-### `mqtt`: optional bridge
+### `mqtt`: optional bridge (add-on options)
 
 Solar entities: irradiance, available solar (total and per array), solar headroom
 (available minus delivered), and a **Solar curtailed** binary sensor.

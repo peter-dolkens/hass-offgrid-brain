@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.0
+- **Settings move into the panel.** A new Settings tab edits everything except
+  the log level and secrets, and applies it live without a restart: dry run (going
+  live asks for confirmation), tick, battery, readings, the SP PRO bridge, the
+  Ecowitt gateway, available solar, autonomy and Fronius polling. Readings use
+  **entity pickers** that query Home Assistant, filtered to suitable entities.
+- **Devices are edited in the panel** (switch and power-sensor pickers, kW, dwell)
+  and stored with the dispatch list in policy.json.
+- The add-on Configuration screen keeps only the log level, MQTT and the new
+  `cloudflare_access` token. Existing options are copied into
+  `/config/settings.json` (and device switches into policy.json) on first start.
+  The old option fields remain for now so that copy can happen, and will be
+  removed in a later release.
+
 ## 0.8.2
 - Panel: every reading's age ("source · N s old") also ticks every second, not
   just the "updated" time.

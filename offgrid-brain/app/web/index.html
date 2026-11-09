@@ -78,6 +78,25 @@
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   .vars { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
   .vars span { font-family: var(--mono); font-size: 12px; background: var(--idle-bg); padding: 3px 8px; border-radius: 6px; }
+  /* Settings */
+  .form { display: grid; grid-template-columns: minmax(150px, 220px) 1fr; gap: 10px 16px; padding: 14px; align-items: center; }
+  .form label { font-weight: 600; font-size: 13px; }
+  .form .help { grid-column: 2; font-size: 12px; color: var(--muted); margin-top: -6px; }
+  .form input[type=text], .form input[type=number], .form textarea {
+    width: 100%; font: inherit; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--bg); color: var(--text); }
+  .form textarea { font-family: var(--mono); font-size: 12px; min-height: 52px; resize: vertical; }
+  .form .now { font-size: 12px; color: var(--muted); grid-column: 2; margin-top: -6px; font-family: var(--mono); }
+  .devtable { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .devtable th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  .devtable td { padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .devtable input { width: 100%; font: inherit; padding: 5px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); }
+  .devtable input.num { width: 80px; }
+  .toggle { display: flex; align-items: center; gap: 10px; }
+  .toggle input { width: 18px; height: 18px; }
+  .live-warn { color: var(--bad); font-weight: 600; }
+  @media (max-width: 640px) { .form { grid-template-columns: 1fr; } .form .help, .form .now { grid-column: 1; } }
+
   /* Policy editor */
   textarea { width: 100%; min-height: 460px; border: 0; padding: 14px; resize: vertical; background: var(--card); color: var(--text);
              font: 13px/1.5 var(--mono); outline: none; tab-size: 2; }
@@ -100,7 +119,7 @@
   <span id="ver" class="muted"></span>
   <span class="spacer"></span>
   <span id="age" class="muted"></span>
-  <nav><button data-tab="live" class="on">Live</button><button data-tab="policy">Policy</button></nav>
+  <nav><button data-tab="live" class="on">Live</button><button data-tab="policy">Policy</button><button data-tab="settings">Settings</button></nav>
 </header>
 
 <main>
@@ -147,6 +166,33 @@
         <div class="changes" id="changes"></div>
       </div>
     </div>
+  </section>
+  <section id="tab-settings" hidden>
+    <div id="settings-form"><div class="empty">Loading settings…</div></div>
+    <div class="card">
+      <div class="actions">
+        <button class="btn primary" id="btn-settings-save">Save settings</button>
+        <button class="btn" id="btn-settings-revert">Revert</button>
+        <span class="spacer"></span>
+        <span id="sstatus" class="muted"></span>
+      </div>
+      <ul class="problems" id="sproblems" hidden></ul>
+    </div>
+    <div class="card">
+      <h2>Devices <span class="muted">What the brain may switch. Stored in policy.json with the dispatch list; a device with no switch is advisory only.</span></h2>
+      <div style="overflow-x:auto"><table class="devtable"><thead><tr>
+        <th>Id</th><th>Name</th><th>kW</th><th>Switch</th><th>Power sensor</th><th>Min dwell (s)</th><th></th>
+      </tr></thead><tbody id="devrows"></tbody></table></div>
+      <div class="actions">
+        <button class="btn" id="btn-dev-add">Add device</button>
+        <button class="btn primary" id="btn-dev-save">Save devices</button>
+        <span class="spacer"></span>
+        <span id="dstatus" class="muted"></span>
+      </div>
+      <ul class="problems" id="dproblems" hidden></ul>
+    </div>
+    <datalist id="dl-soc"></datalist><datalist id="dl-power"></datalist><datalist id="dl-temperature"></datalist>
+    <datalist id="dl-energy"></datalist><datalist id="dl-irradiance"></datalist><datalist id="dl-switchable"></datalist>
   </section>
 </main>
 
@@ -390,13 +436,191 @@ $("btn-check").onclick = check;
 $("btn-apply").onclick = apply;
 $("btn-revert").onclick = () => { if ($("editor").value === saved || confirm("Discard your changes?")) loadPolicy(); };
 
+// ---------- settings ----------
+/* One line per setting: section, dotted path, type, label, help, picker kind. */
+const FIELDS = [
+  ["Control", "dry_run", "bool", "Dry run", "Decide and log, but switch nothing. Turning this off asks for confirmation."],
+  ["Control", "tick_seconds", "int", "Tick (s)", "How often the dispatch list is walked."],
+  ["Battery", "battery.capacity_kwh", "num", "Capacity (kWh)"],
+  ["Battery", "battery.inverter_kw", "num", "Inverter (kW)", "The battery inverter's continuous rating."],
+  ["Battery", "battery.max_charge_kw", "num", "Max charge (kW)"],
+  ["Battery", "battery.reserve_pct", "num", "Reserve (%)", "Nothing may discharge below this."],
+  ["Readings from Home Assistant", "sources.battery_soc", "entity", "Battery SoC", "Only needed without the SP PRO bridge.", "soc"],
+  ["Readings from Home Assistant", "sources.load_power", "entity", "House load", "W or kW.", "power"],
+  ["Readings from Home Assistant", "sources.pv_power", "entity", "Solar power", "W or kW.", "power"],
+  ["Readings from Home Assistant", "sources.irradiance", "entity", "Irradiance", "Only needed without an Ecowitt gateway.", "irradiance"],
+  ["Readings from Home Assistant", "sources.outdoor_temp", "entity", "Outdoor temperature", "", "temperature"],
+  ["Readings from Home Assistant", "sources.pv_forecast_today", "entity", "Solar forecast today", "kWh.", "energy"],
+  ["SP PRO bridge (splink)", "splink.enabled", "bool", "Enabled"],
+  ["SP PRO bridge (splink)", "splink.urls", "list", "URLs", "One per line, tried in order: LAN first, tunnel second."],
+  ["SP PRO bridge (splink)", "splink.poll_seconds", "int", "Full read (s)", "PV and energy counters."],
+  ["SP PRO bridge (splink)", "splink.fast_seconds", "int", "Fast window (s)", "SoC and load for shedding; 0 turns it off."],
+  ["Irradiance (Ecowitt gateway)", "ecowitt.enabled", "bool", "Enabled"],
+  ["Irradiance (Ecowitt gateway)", "ecowitt.urls", "list", "URLs", "One per line, e.g. Ethernet then Wi-Fi."],
+  ["Irradiance (Ecowitt gateway)", "ecowitt.poll_seconds", "int", "Poll (s)"],
+  ["Available solar", "solar.inverter_ac_kw", "num", "Inverter AC rating (kW)", "Each AC-coupled inverter's ceiling."],
+  ["Available solar", "solar.kwp", "num?", "Array kWp override", "Blank = each inverter's configured PV peak."],
+  ["Autonomy", "autonomy.seed_load_kwh", "num", "Seed daily load (kWh)", "Used until a week of real load history exists."],
+  ["Autonomy", "autonomy.window_days", "int", "History window (days)"],
+  ["Fronius direct polling", "fronius.enabled", "bool", "Enabled", "Not needed with the bridge."],
+  ["Fronius direct polling", "fronius.hosts", "list", "Hosts", "One IP per line."],
+  ["Fronius direct polling", "fronius.poll_seconds", "int", "Poll (s)"],
+];
+
+const SWITCHABLE = ["switch", "input_boolean", "light", "fan", "climate", "water_heater", "humidifier"];
+const KINDS = {
+  soc: (e) => e.domain === "sensor" && (e.device_class === "battery" || e.unit === "%"),
+  power: (e) => e.domain === "sensor" && (e.device_class === "power" || /^(k?W)$/.test(e.unit || "")),
+  temperature: (e) => e.domain === "sensor" && (e.device_class === "temperature" || /°[CF]/.test(e.unit || "")),
+  energy: (e) => e.domain === "sensor" && (e.device_class === "energy" || /^(k?Wh)$/.test(e.unit || "")),
+  irradiance: (e) => e.domain === "sensor" && (e.device_class === "irradiance" || /W\/m/.test(e.unit || "")),
+  switchable: (e) => SWITCHABLE.includes(e.domain),
+};
+
+let settingsSaved = null, entities = [], devicesSaved = null;
+const getPath = (o, p) => p.split(".").reduce((x, k) => (x == null ? x : x[k]), o);
+const setPath = (o, p, v) => { const ks = p.split("."); let x = o; for (const k of ks.slice(0, -1)) x = x[k] = x[k] || {}; x[ks.at(-1)] = v; };
+const entityLabel = (e) => `${e.name}${e.area ? ` · ${e.area}` : ""} · ${e.state}${e.unit ? " " + e.unit : ""}`;
+const entityNow = (id) => { const e = entities.find((x) => x.entity_id === id); return e ? entityLabel(e) : id ? "not found in Home Assistant" : ""; };
+
+function fillDatalists() {
+  for (const [kind, ok] of Object.entries(KINDS)) {
+    $(`dl-${kind}`).innerHTML = entities.filter(ok).sort((a, b) => a.name.localeCompare(b.name))
+      .map((e) => `<option value="${esc(e.entity_id)}">${esc(entityLabel(e))}</option>`).join("");
+  }
+}
+
+function renderSettings(s) {
+  let html = "", section = null;
+  for (const [sec, path, type, label, help, kind] of FIELDS) {
+    if (sec !== section) { if (section) html += "</div></div>"; html += `<div class="card"><h2>${esc(sec)}</h2><div class="form">`; section = sec; }
+    const v = getPath(s, path);
+    const id = `f-${path.replace(/\./g, "-")}`;
+    let input;
+    if (type === "bool") input = `<div class="toggle"><input type="checkbox" id="${id}" ${v ? "checked" : ""}><span id="${id}-txt"></span></div>`;
+    else if (type === "list") input = `<textarea id="${id}" spellcheck="false">${esc((v || []).join("\n"))}</textarea>`;
+    else if (type === "entity") input = `<input type="text" id="${id}" list="dl-${kind}" value="${esc(v || "")}" placeholder="pick or type an entity id" spellcheck="false">`;
+    else input = `<input type="number" id="${id}" step="any" value="${v == null ? "" : esc(v)}">`;
+    html += `<label for="${id}">${esc(label)}</label>${input}`;
+    if (type === "entity") html += `<div class="now" id="${id}-now">${esc(entityNow(v))}</div>`;
+    if (help) html += `<div class="help">${esc(help)}</div>`;
+  }
+  $("settings-form").innerHTML = html + "</div></div>";
+  for (const [, path, type] of FIELDS) {
+    const el = $(`f-${path.replace(/\./g, "-")}`);
+    if (type === "entity") el.addEventListener("input", () => { $(`${el.id}-now`).textContent = entityNow(el.value.trim()); });
+  }
+  const dry = $("f-dry_run");
+  const showDry = () => { $("f-dry_run-txt").innerHTML = dry.checked ? "on: deciding and logging only" : '<span class="live-warn">off: LIVE CONTROL, switching real loads</span>'; };
+  dry.addEventListener("change", showDry); showDry();
+}
+
+function readSettings() {
+  const s = JSON.parse(JSON.stringify(settingsSaved));
+  for (const [, path, type] of FIELDS) {
+    const el = $(`f-${path.replace(/\./g, "-")}`);
+    let v;
+    if (type === "bool") v = el.checked;
+    else if (type === "list") v = el.value.split("\n").map((x) => x.trim()).filter(Boolean);
+    else if (type === "entity") v = el.value.trim();
+    else if (type === "num?") v = el.value.trim() === "" ? null : Number(el.value);
+    else v = Number(el.value);
+    setPath(s, path, v);
+  }
+  return s;
+}
+
+function showList(el, list) { el.innerHTML = list.map((p) => `<li>${esc(p)}</li>`).join(""); el.hidden = !list.length; }
+
+async function loadSettingsTab() {
+  const [st, en] = await Promise.all([
+    fetch("api/settings", { cache: "no-store" }).then((r) => r.json()),
+    fetch("api/entities", { cache: "no-store" }).then((r) => r.json()).catch(() => ({ entities: [] })),
+  ]);
+  entities = en.entities || [];
+  fillDatalists();
+  settingsSaved = st.settings;
+  renderSettings(settingsSaved);
+  $("sstatus").textContent = `${st.path} · ${entities.length} Home Assistant entities available`;
+  showList($("sproblems"), []);
+  const pol = await fetch("api/policy", { cache: "no-store" }).then((r) => r.json());
+  devicesSaved = pol.policy;
+  renderDevices(devicesSaved.devices);
+}
+
+async function saveSettings() {
+  const s = readSettings();
+  const body = { settings: s };
+  if (settingsSaved.dry_run && s.dry_run === false) {
+    if (!confirm("Turn on LIVE CONTROL?\n\nThe brain will start switching the mapped devices on and off for real.")) return;
+    body.confirm = "LIVE";
+  }
+  const r = await fetch("api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const out = await r.json();
+  if (!r.ok) { showList($("sproblems"), out.problems || [out.error]); $("sstatus").textContent = "Not saved."; return; }
+  showList($("sproblems"), []);
+  settingsSaved = s;
+  $("sstatus").textContent = "Saved and applied. The previous version is kept as settings.json.bak.";
+  setTimeout(refresh, 800);
+}
+
+// ---------- devices (stored in policy.json) ----------
+function renderDevices(devs) {
+  $("devrows").innerHTML = devs.map((d, i) => `<tr data-i="${i}">
+    <td><input data-k="id" value="${esc(d.id)}" spellcheck="false"></td>
+    <td><input data-k="name" value="${esc(d.name || "")}"></td>
+    <td><input data-k="kw" class="num" type="number" step="any" value="${esc(d.kw)}"></td>
+    <td><input data-k="switch" list="dl-switchable" value="${esc(d.switch || "")}" placeholder="advisory only" spellcheck="false">
+        <div class="muted" style="font-size:11px">${esc(d.switch ? entityNow(d.switch) : "")}</div></td>
+    <td><input data-k="power_sensor" list="dl-power" value="${esc(d.power_sensor || "")}" spellcheck="false">
+        <div class="muted" style="font-size:11px">${esc(d.power_sensor ? entityNow(d.power_sensor) : "")}</div></td>
+    <td><input data-k="min_dwell_seconds" class="num" type="number" step="1" value="${d.min_dwell_seconds == null ? "" : esc(d.min_dwell_seconds)}" placeholder="300"></td>
+    <td><button class="btn" data-del="${i}">Remove</button></td></tr>`).join("") || '<tr><td colspan="7" class="muted">No devices yet.</td></tr>';
+  for (const b of document.querySelectorAll("[data-del]")) b.onclick = () => {
+    const devs2 = readDevices(); devs2.splice(Number(b.dataset.del), 1); renderDevices(devs2);
+  };
+}
+
+function readDevices() {
+  return [...document.querySelectorAll("#devrows tr[data-i]")].map((tr) => {
+    const d = {};
+    for (const el of tr.querySelectorAll("input[data-k]")) {
+      const k = el.dataset.k, v = el.value.trim();
+      if (k === "kw") d.kw = Number(v);
+      else if (k === "min_dwell_seconds") { if (v !== "") d.min_dwell_seconds = Number(v); }
+      else if (v !== "" || k === "id") d[k] = v;
+    }
+    return d;
+  });
+}
+
+async function saveDevices() {
+  const policyNext = { ...devicesSaved, devices: readDevices() };
+  const r = await fetch("api/policy", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(policyNext) });
+  const out = await r.json();
+  if (!r.ok) { showList($("dproblems"), out.problems || [out.error]); $("dstatus").textContent = "Not saved."; return; }
+  showList($("dproblems"), []);
+  devicesSaved = policyNext;
+  $("editor").value = "";   // the Policy tab reloads on next visit
+  $("dstatus").textContent = "Saved to policy.json and applied.";
+  renderDevices(devicesSaved.devices);
+  setTimeout(refresh, 800);
+}
+
+$("btn-settings-save").onclick = saveSettings;
+$("btn-settings-revert").onclick = () => { renderSettings(settingsSaved); showList($("sproblems"), []); $("sstatus").textContent = "Reverted to the saved settings."; };
+$("btn-dev-add").onclick = () => { const d = readDevices(); d.push({ id: "", name: "", kw: 0 }); renderDevices(d); };
+$("btn-dev-save").onclick = saveDevices;
+
 // ---------- tabs ----------
 for (const b of document.querySelectorAll("nav button")) {
   b.onclick = () => {
     for (const o of document.querySelectorAll("nav button")) o.classList.toggle("on", o === b);
     $("tab-live").hidden = b.dataset.tab !== "live";
     $("tab-policy").hidden = b.dataset.tab !== "policy";
+    $("tab-settings").hidden = b.dataset.tab !== "settings";
     if (b.dataset.tab === "policy" && !$("editor").value) loadPolicy();
+    if (b.dataset.tab === "settings") loadSettingsTab();
   };
 }
 

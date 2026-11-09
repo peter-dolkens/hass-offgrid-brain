@@ -19,6 +19,10 @@ class Actuator {
     this.lastState = new Map();    // id -> bool
   }
 
+  /** Swap in a new device list (policy edited from the web panel). Each device's
+      last state and change time are kept, so dwell still holds across the edit. */
+  setDevices(devices) { this.devices = new Map(devices.map((d) => [d.id, d])); }
+
   /** Apply decisions; returns what was changed / suppressed, for logging and MQTT. */
   async apply(decisions) {
     const applied = [];

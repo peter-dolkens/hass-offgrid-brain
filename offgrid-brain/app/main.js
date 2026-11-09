@@ -7,11 +7,17 @@
    optimistically: on an off-grid system an over-optimistic SoC flattens the bank.
    So an unreadable SoC is treated as "at reserve", which collapses the reachable
    depth of the list to the non-sheddable top entries and sheds everything else.
-   Fail-safe here means fail-austere. */
+   Fail-safe here means fail-austere.
+
+   Configuration comes from two places. The add-on options hold only the log level
+   and secrets (MQTT credentials, the Cloudflare Access token). Everything else is
+   in /config/settings.json and /config/policy.json, edited from the web panel and
+   applied live through applySettings() / applyPolicy(). */
 "use strict";
 const fs = require("fs");
 const log = require("./log.js");
-const { loadOptions, loadPolicy, check, validate, POLICY_PATH } = require("./config.js");
+const { loadOptions, loadPolicy, check, validate, mergeDeviceOptions, POLICY_PATH } = require("./config.js");
+const Settings = require("./settings.js");
 const { HAClient } = require("./sources/ha.js");
 const { FroniusPoller } = require("./sources/fronius.js");
 const { SplinkPoller } = require("./sources/splink.js");
@@ -22,7 +28,7 @@ const { Actuator } = require("./sinks/actuator.js");
 const { MqttSink, resolveBroker } = require("./sinks/mqtt.js");
 const { decide } = require("./policy/dispatch.js");
 const { buildContext, LoadHistory } = require("./policy/context.js");
-const { startServer } = require("./web/server.js");
+const { startServer, savePolicy } = require("./web/server.js");
 const VERSION = require("./package.json").version;
 
 const STATE_PATH = "/data/brain-state.json";
@@ -34,53 +40,34 @@ function saveState(s) {
   try { fs.writeFileSync(STATE_PATH, JSON.stringify(s)); } catch (e) { log.warn("could not persist state", e.message); }
 }
 
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
 async function main() {
   const opt = loadOptions();
   log.setLevel(opt.log_level || "info");
 
-  const dryRun = opt.dry_run !== false;    // default ON — must be explicitly disabled
-  // Short by default: shedding has to act within the inverter's surge window, and
-  // the walk itself costs microseconds. Per-device dwell stops relays chattering.
-  const tickSec = opt.tick_seconds || 5;
-  const battery = Object.assign(
-    { capacity_kwh: 51.8, inverter_kw: 7.5, max_charge_kw: 7.5, reserve_pct: 10 },
-    opt.battery
-  );
-  const sources = opt.sources || {};
-  const devices = opt.devices || [];
+  let settings = Settings.loadSettings(opt);
+  for (const p of Settings.check(settings)) log.warn(`settings: ${p}`);
 
   log.info("=".repeat(64));
-  log.info(`Off-Grid Brain ${VERSION} — ${dryRun ? "DRY RUN (actuating nothing)" : "LIVE CONTROL"}`);
-  log.info(`battery ${battery.capacity_kwh} kWh / ${battery.inverter_kw} kW, reserve ${battery.reserve_pct}%`);
+  log.info(`Off-Grid Brain ${VERSION} — ${settings.dry_run ? "DRY RUN (actuating nothing)" : "LIVE CONTROL"}`);
 
   let policy = loadPolicy();
-  for (const p of validate(policy, devices)) log.warn(`policy: ${p}`);
-  const limits = { ...battery, tick_hours: tickSec / 3600 };
+  // Devices used to take their switch/sensor/dwell from the add-on options.
+  if (mergeDeviceOptions(policy, opt.devices)) {
+    try { savePolicy(POLICY_PATH, policy); log.info("moved device switches from the add-on options into policy.json"); }
+    catch (e) { log.warn(`could not save policy.json: ${e.message}`); }
+  }
+  for (const p of validate(policy)) log.warn(`policy: ${p}`);
 
-  // ---- sources -------------------------------------------------------------
+  // Secrets stay in the add-on options; older installs had the Access token under splink.
+  const access = opt.cloudflare_access || {};
+  const accessId = access.client_id || (opt.splink && opt.splink.access_client_id) || "";
+  const accessSecret = access.client_secret || (opt.splink && opt.splink.access_client_secret) || "";
+
+  // ---- long-lived parts ----------------------------------------------------
   const ha = new HAClient({ token: process.env.SUPERVISOR_TOKEN });
-  ha.track(Object.values(sources).filter(Boolean));
-  ha.track(devices.map((d) => d.switch).filter(Boolean));
-  ha.track(devices.map((d) => d.power_sensor).filter(Boolean));
   ha.connect();
-
-  const froniusCfg = opt.fronius || {};
-  const fronius = new FroniusPoller({ hosts: froniusCfg.hosts || [], pollSeconds: froniusCfg.poll_seconds });
-  if (froniusCfg.enabled) fronius.start();
-
-  const splinkCfg = opt.splink || {};
-  const splink = new SplinkPoller({
-    urls: splinkCfg.urls,
-    pollSeconds: splinkCfg.poll_seconds,
-    fastSeconds: splinkCfg.fast_seconds,
-    accessClientId: splinkCfg.access_client_id,
-    accessClientSecret: splinkCfg.access_client_secret,
-  });
-  if (splinkCfg.enabled) splink.start();
-
-  const ecowittCfg = opt.ecowitt || {};
-  const ecowitt = new EcowittPoller({ urls: ecowittCfg.urls, pollSeconds: ecowittCfg.poll_seconds });
-  if (ecowittCfg.enabled) ecowitt.start();
 
   const mqttCfg = opt.mqtt || {};
   const mqttSink = new MqttSink({
@@ -90,21 +77,71 @@ async function main() {
   });
   mqttSink.connect();
 
-  const actuator = new Actuator({ ha, devices, dryRun });
-
-  // ---- persistent load history (autonomy denominator) ----------------------
-  const au = Object.assign({ seed_load_kwh: 30, window_days: 7 }, opt.autonomy);
+  const actuator = new Actuator({ ha, devices: policy.devices, dryRun: settings.dry_run });
   const saved = loadState();
-  const history = LoadHistory.fromJSON(saved.history, au.window_days, au.seed_load_kwh);
-
+  let history = LoadHistory.fromJSON(saved.history, settings.autonomy.window_days, settings.autonomy.seed_load_kwh);
   // Per-array factors learned so far (irradiance -> available kW) survive restarts.
-  const solarCfg = opt.solar || {};
-  const estimator = new SolarEstimator({ acKw: solarCfg.inverter_ac_kw || 10, state: saved.solar });
+  const estimator = new SolarEstimator({ acKw: settings.solar.inverter_ac_kw, state: saved.solar });
+
+  // ---- parts rebuilt when their settings change ------------------------------
+  let splink = null, ecowitt = null, fronius = null, timer = null;
+  let limits = null;
+
+  function trackEntities() {
+    ha.track(Object.values(settings.sources).filter(Boolean));
+    ha.track(policy.devices.flatMap((d) => [d.switch, d.power_sensor]).filter(Boolean));
+  }
+
+  /** Make `next` the settings in force, rebuilding only what changed. */
+  function applySettings(next, prev = null) {
+    settings = next;
+    const changed = (k) => !prev || !same(prev[k], next[k]);
+
+    if (changed("dry_run")) {
+      actuator.dryRun = next.dry_run;
+      if (prev) log.warn(`control mode changed from the web panel: ${next.dry_run ? "DRY RUN" : "LIVE CONTROL"}`);
+    }
+    limits = { ...next.battery, tick_hours: next.tick_seconds / 3600 };
+    estimator.acKw = next.solar.inverter_ac_kw;
+    if (prev && changed("autonomy")) {
+      history = LoadHistory.fromJSON(history.toJSON(), next.autonomy.window_days, next.autonomy.seed_load_kwh);
+    }
+    if (changed("splink")) {
+      if (splink) splink.stop();
+      splink = new SplinkPoller({
+        urls: next.splink.urls, pollSeconds: next.splink.poll_seconds, fastSeconds: next.splink.fast_seconds,
+        accessClientId: accessId, accessClientSecret: accessSecret,
+      });
+      if (next.splink.enabled) splink.start();
+    }
+    if (changed("ecowitt")) {
+      if (ecowitt) ecowitt.stop();
+      ecowitt = new EcowittPoller({ urls: next.ecowitt.urls, pollSeconds: next.ecowitt.poll_seconds });
+      if (next.ecowitt.enabled) ecowitt.start();
+    }
+    if (changed("fronius")) {
+      if (fronius) fronius.stop();
+      fronius = new FroniusPoller({ hosts: next.fronius.hosts, pollSeconds: next.fronius.poll_seconds });
+      if (next.fronius.enabled) fronius.start();
+    }
+    if (changed("tick_seconds")) {
+      if (timer) clearInterval(timer);
+      timer = setInterval(runTick, next.tick_seconds * 1000);
+    }
+    trackEntities();
+  }
+
+  function applyPolicy(p) {
+    policy = p;
+    actuator.setDevices(p.devices);
+    trackEntities();
+    for (const w of validate(policy)) log.warn(`policy: ${w}`);
+  }
 
   // ---- web UI (ingress) ----------------------------------------------------
   // What the UI shows is exactly what the last tick decided, plus the context it
   // decided in, so a candidate policy can be previewed against the same moment.
-  let snapshot = { starting: true, version: VERSION, dryRun };
+  let snapshot = { starting: true, version: VERSION, dryRun: settings.dry_run };
   let lastCtx = null;
   const summarise = (r) => ({
     trace: r.trace, decisions: r.decisions, floorPct: r.floorPct, chargeKw: r.charge,
@@ -118,11 +155,18 @@ async function main() {
     getPolicy: () => policy,
     check,
     preview: (p) => (lastCtx ? summarise(decide(p, lastCtx, limits)) : null),
-    apply: (p) => {
-      policy = p;
-      for (const w of validate(policy, devices)) log.warn(`policy: ${w}`);
-      runTick();   // show the new policy's decisions straight away
+    apply: (p) => { applyPolicy(p); runTick(); },   // show the new policy's decisions straight away
+    settingsPath: Settings.SETTINGS_PATH,
+    getSettings: () => settings,
+    checkSettings: (s) => Settings.check(Settings.normalise(s)),
+    applySettings: (s) => {
+      const next = Settings.normalise(s);
+      Settings.save(next);
+      applySettings(next, settings);
+      log.info("settings updated from the web UI (previous kept as settings.json.bak)");
+      runTick();
     },
+    listEntities: () => ha.listEntities(),
   });
 
   // ---- tick ----------------------------------------------------------------
@@ -137,12 +181,15 @@ async function main() {
 
   async function tick() {
     const now = new Date();
+    const { sources, battery, solar: solarCfg } = settings;
+    const tickSec = settings.tick_seconds;
+    const dryRun = settings.dry_run;
 
     // Each input takes the first FRESH reading, most direct path first: the
     // splink bridge, then a mapped HA entity, then (PV only) direct Fronius.
-    const sp = splinkCfg.enabled ? splink.readings : {};
+    const sp = settings.splink.enabled ? splink.readings : {};
     const kw = (r) => ({ value: r.value / 1000, ageSec: r.ageSec });   // HA powers are W
-    const fronPv = froniusCfg.enabled ? { value: fronius.pvKw, ageSec: fronius.ageSec } : null;
+    const fronPv = settings.fronius.enabled ? { value: fronius.pvKw, ageSec: fronius.ageSec } : null;
     const socEnt = pick([["splink", sp.soc], ["ha", ha.number(sources.battery_soc)]]);
     const loadEnt = pick([["splink", sp.loadKw], ["ha", kw(ha.number(sources.load_power))]]);
     const pvEnt = pick([["splink", sp.pvKw], ["ha", kw(ha.number(sources.pv_power))], ["fronius", fronPv]]);
@@ -155,7 +202,7 @@ async function main() {
     const safeMode = !socUsable;
     const soc = socUsable ? socEnt.value : battery.reserve_pct;
     if (safeMode) {
-      const configured = splinkCfg.enabled || sources.battery_soc;
+      const configured = settings.splink.enabled || sources.battery_soc;
       log.warn(`SAFE MODE — battery SoC ${configured ? "unavailable or stale" : "not configured"}${Number.isFinite(socEnt.ageSec) ? ` (newest reading ${socEnt.ageSec.toFixed(0)}s old)` : ""}; assuming reserve (${battery.reserve_pct}%) and shedding all discretionary load`);
     }
 
@@ -214,7 +261,7 @@ async function main() {
       `autonomy=${(ctx.autonomy * 24).toFixed(0)}h floor=${result.floorPct}% ` +
       `run=[${result.decisions.filter((d) => d.run).map((d) => d.id).join(",")}] ` +
       `shed=[${result.shed.map((d) => d.id).join(",")}]`;
-    const signature = `${safeMode}|${result.decisions.map((d) => `${d.id}:${d.run}`).join(",")}`;
+    const signature = `${safeMode}|${dryRun}|${result.decisions.map((d) => `${d.id}:${d.run}`).join(",")}`;
     if (signature !== lastSignature || now - lastInfoAt >= HEARTBEAT_MS) {
       log.info(line);
       lastSignature = signature;
@@ -233,11 +280,11 @@ async function main() {
     snapshot = {
       time: now.toISOString(), version: VERSION, dryRun, safeMode, tickSec, battery,
       inputs: { soc: socEnt, loadKw: loadEnt, pvKw: pvEnt, batteryKw: sp.batteryKw || null, energy: sp.energy || null, inverters: sp.inverters || [] },
-      splinkSource: splinkCfg.enabled ? splink.source : null,
+      splinkSource: settings.splink.enabled ? splink.source : null,
       solar,
       ctx,
       result: summarise(result),
-      devices: devices.map((d) => ({ id: d.id, name: d.name, switch: d.switch || null })),
+      devices: policy.devices.map((d) => ({ id: d.id, name: d.name, switch: d.switch || null })),
     };
 
     await actuator.apply(result.decisions);
@@ -245,7 +292,7 @@ async function main() {
     saveState({ history: history.toJSON(), solar: estimator.toJSON(), updated: now.toISOString() });
   }
 
-  setInterval(runTick, tickSec * 1000);
+  applySettings(settings);
   setTimeout(runTick, 3000);
 
   process.on("SIGTERM", () => {

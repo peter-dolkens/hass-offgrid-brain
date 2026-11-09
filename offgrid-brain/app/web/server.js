@@ -10,7 +10,12 @@
      GET  /api/state          last tick: inputs, context, decisions, per-entry trace
      GET  /api/policy         the policy in force
      POST /api/policy/check   validate a candidate and preview it against the last tick
-     PUT  /api/policy         validate, save to policy.json, and apply immediately */
+     PUT  /api/policy         validate, save to policy.json, and apply immediately
+     GET  /api/settings       the settings in force
+     POST /api/settings/check validate candidate settings
+     PUT  /api/settings       validate, save to settings.json, and apply immediately;
+                              turning dry run OFF also needs { confirm: "LIVE" }
+     GET  /api/entities       every HA entity, for the settings pickers */
 "use strict";
 const http = require("http");
 const fs = require("fs");
@@ -67,6 +72,11 @@ function savePolicy(file, policy) {
  * @param {(p: object) => object} o.preview       dispatch result for p against the last tick
  * @param {(p: object) => void} o.apply           make p the policy in force
  * @param {string} o.policyPath
+ * @param {string} o.settingsPath
+ * @param {() => object} o.getSettings
+ * @param {(s: object) => string[]} o.checkSettings
+ * @param {(s: object) => void} o.applySettings
+ * @param {() => Promise<object[]>} o.listEntities
  * @param {boolean} [o.allowAny]         accept any client (local development only)
  */
 function startServer(o) {
@@ -97,6 +107,27 @@ function startServer(o) {
           log.info(`policy updated from the web UI: ${candidate.devices.length} devices, ${candidate.list.length} entries (previous kept as ${path.basename(o.policyPath)}.bak)`);
           return send(res, 200, { ok: true });
         }
+        case "GET /api/settings":
+          return send(res, 200, { settings: o.getSettings(), path: o.settingsPath });
+        case "POST /api/settings/check": {
+          const candidate = await readJson(req);
+          return send(res, 200, { problems: o.checkSettings(candidate) });
+        }
+        case "PUT /api/settings": {
+          const body = await readJson(req);
+          const candidate = body && body.settings;
+          const problems = o.checkSettings(candidate);
+          if (problems.length) return send(res, 422, { problems });
+          // Going live starts switching real loads: it must be asked for explicitly,
+          // not ride along with an unrelated edit.
+          if (o.getSettings().dry_run && candidate.dry_run === false && body.confirm !== "LIVE") {
+            return send(res, 409, { problems: ["turning dry run off needs confirmation"] });
+          }
+          o.applySettings(candidate);
+          return send(res, 200, { ok: true });
+        }
+        case "GET /api/entities":
+          return send(res, 200, { entities: await o.listEntities() });
         default:
           return send(res, 404, { error: "not found" });
       }

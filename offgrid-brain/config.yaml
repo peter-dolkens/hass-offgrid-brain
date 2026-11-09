@@ -1,6 +1,6 @@
 # Home Assistant add-on manifest. Installs into a supervised HAOS instance.
 name: Off-Grid Brain
-version: "0.8.2"
+version: "0.9.0"
 slug: offgrid_brain
 description: >-
   Load-shedding and dispatch brain for an off-grid solar + battery house. Walks
@@ -28,10 +28,25 @@ map:
 services:
   - mqtt:want
 
+# Since 0.9.0 the brain is configured from its web panel (Settings tab); the
+# options below the mqtt/cloudflare_access blocks are only read ONCE, to seed
+# /config/settings.json on first start, and will be removed in a later release.
+# They stay for now because the Supervisor drops option keys missing from the
+# schema before the add-on starts, which would lose an existing install's config.
 options:
+  log_level: info
+  mqtt:
+    enabled: false
+    discovery_prefix: homeassistant
+    host: ""
+    port: 1883
+    username: ""
+    password: ""
+  cloudflare_access:
+    client_id: ""
+    client_secret: ""
   dry_run: true
   tick_seconds: 5
-  log_level: info
   sources:
     battery_soc: ""
     pv_power: ""
@@ -65,13 +80,6 @@ options:
     hosts: []
     poll_seconds: 10
     publish_to_ha: false
-  mqtt:
-    enabled: false
-    discovery_prefix: homeassistant
-    host: ""
-    port: 1883
-    username: ""
-    password: ""
   devices: []
 
 schema:
@@ -127,6 +135,10 @@ schema:
       - str
     poll_seconds: int(5,300)
     publish_to_ha: bool
+  # Cloudflare Access service token, if the SP PRO bridge's tunnel is behind Access.
+  cloudflare_access:
+    client_id: str?
+    client_secret: password?
   # Publishes the brain's state as an "Off-Grid Brain" device via MQTT discovery.
   # Leave host blank to use the Mosquitto add-on's own credentials.
   mqtt:

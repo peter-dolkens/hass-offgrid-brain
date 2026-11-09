@@ -24,7 +24,44 @@ class HAClient {
     this.backoff = 1000;
   }
 
-  track(entityIds) { for (const e of entityIds) if (e) this.watch.add(e); }
+  /** Mirror these entities. New ones are fetched now if the socket is up, so a
+      source changed in the settings is readable on the next tick. */
+  track(entityIds) {
+    const added = [];
+    for (const e of entityIds) if (e && !this.watch.has(e)) { this.watch.add(e); added.push(e); }
+    if (added.length && this.ready) {
+      this.send({ type: "get_states" })
+        .then((all) => { for (const st of all) if (added.includes(st.entity_id)) this._store(st.entity_id, st); })
+        .catch((e) => log.warn("could not fetch newly tracked entities", e.message));
+    }
+  }
+
+  /** Every entity, for the settings pickers: id, name, state, unit, device class
+      and area. Live from HA, not the mirror, so it includes untracked entities. */
+  async listEntities() {
+    const [states, entities, devices, areas] = await Promise.all([
+      this.send({ type: "get_states" }),
+      this.send({ type: "config/entity_registry/list" }).catch(() => []),
+      this.send({ type: "config/device_registry/list" }).catch(() => []),
+      this.send({ type: "config/area_registry/list" }).catch(() => []),
+    ]);
+    const areaName = new Map(areas.map((a) => [a.area_id, a.name]));
+    const deviceArea = new Map(devices.map((d) => [d.id, d.area_id]));
+    const reg = new Map(entities.map((e) => [e.entity_id, e]));
+    return states.map((st) => {
+      const r = reg.get(st.entity_id) || {};
+      const area = r.area_id || deviceArea.get(r.device_id) || null;
+      return {
+        entity_id: st.entity_id,
+        domain: st.entity_id.split(".")[0],
+        name: (st.attributes && st.attributes.friendly_name) || st.entity_id,
+        state: st.state,
+        unit: (st.attributes && st.attributes.unit_of_measurement) || null,
+        device_class: (st.attributes && st.attributes.device_class) || null,
+        area: area ? areaName.get(area) || null : null,
+      };
+    });
+  }
 
   connect() {
     log.info(`connecting to HA at ${this.url}`);
