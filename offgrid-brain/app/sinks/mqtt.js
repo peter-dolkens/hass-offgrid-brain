@@ -118,8 +118,26 @@ class MqttSink {
     this.client.publish(`offgrid_brain/${key}`, String(value), { retain: true });
   }
 
+  publishSolar(solar, power) {
+    // Off grid, delivered solar is throttled to the load once the battery is full;
+    // these say what the sun could give, and whether the arrays are being held back.
+    const irr = solar.irradiance;
+    this.publish("sensor", "irradiance", num(irr && irr.ageSec < 300 ? irr.value : NaN, 0),
+      { name: "Irradiance", unit_of_measurement: "W/m²", device_class: "irradiance", state_class: "measurement" });
+    this.publish("sensor", "solar_available_power", num(solar.availableKw * 1000, 0),
+      { name: "Solar available", ...power, icon: "mdi:solar-power-variant-outline" });
+    this.publish("sensor", "solar_headroom_power", num(solar.headroomKw * 1000, 0),
+      { name: "Solar headroom", ...power, icon: "mdi:arrow-collapse-up" });
+    this.publish("binary_sensor", "solar_curtailed", solar.curtailed ? "ON" : "OFF",
+      { name: "Solar curtailed", icon: "mdi:solar-power-variant-outline" });
+    for (const a of solar.arrays || []) {
+      this.publish("sensor", `solar_${a.key}_available_power`, num(a.availableKw * 1000, 0),
+        { name: `${a.name} available`, ...power, icon: "mdi:solar-power-variant-outline" });
+    }
+  }
+
   /** One tick's summary: the numbers you would want on a dashboard. */
-  publishTick({ ctx, result, safeMode, dryRun, inputs }) {
+  publishTick({ ctx, result, safeMode, dryRun, inputs, solar }) {
     if (!this.enabled) return;
     const power = { unit_of_measurement: "W", device_class: "power", state_class: "measurement" };
     // The REAL reading, not the reserve value safe mode substitutes for decisions.
@@ -128,10 +146,11 @@ class MqttSink {
     this.publish("sensor", "load_power", num(inputs.loadKw.value * 1000, 0), { name: "Load", ...power });
     this.publish("sensor", "pv_power", num(ctx.pv * 1000, 0), { name: "Solar", ...power });
     this.publish("sensor", "charge_power", num(result.charge * 1000, 0), { name: "Charging", ...power, icon: "mdi:battery-charging" });
-    // Battery power for the Energy dashboard: positive while discharging, negative while charging.
+    // Battery power for the Energy dashboard, which wants POSITIVE while discharging.
+    // The bridge reports the opposite (positive = charging), so it's negated here.
     if (inputs.batteryKw) {
       const b = inputs.batteryKw;
-      this.publish("sensor", "battery_power", num(b.ageSec < ENERGY_STALE_SEC ? b.value * 1000 : NaN, 0),
+      this.publish("sensor", "battery_power", num(b.ageSec < ENERGY_STALE_SEC ? -b.value * 1000 : NaN, 0),
         { name: "Battery power", ...power, icon: "mdi:home-battery" });
     }
     // Each solar inverter separately: power, and its lifetime energy counter.
@@ -163,6 +182,7 @@ class MqttSink {
       { name: "Loads shed", state_class: "measurement", icon: "mdi:flash-off" });
     this.publish("sensor", "shed_detail", JSON.stringify(result.shed.map((s) => s.id)).slice(0, 255),
       { name: "Shed loads", icon: "mdi:format-list-bulleted" });
+    if (solar) this.publishSolar(solar, power);
     this.publish("binary_sensor", "safe_mode", safeMode ? "ON" : "OFF", { name: "Safe mode", device_class: "problem" });
     this.publish("binary_sensor", "dry_run", dryRun ? "ON" : "OFF", { name: "Dry run", icon: "mdi:test-tube" });
   }

@@ -15,6 +15,8 @@ const { loadOptions, loadPolicy, check, validate, POLICY_PATH } = require("./con
 const { HAClient } = require("./sources/ha.js");
 const { FroniusPoller } = require("./sources/fronius.js");
 const { SplinkPoller } = require("./sources/splink.js");
+const { EcowittPoller } = require("./sources/ecowitt.js");
+const { SolarEstimator, isUnconstrained } = require("./policy/solar.js");
 const { pick, STALE_SEC } = require("./sources/pick.js");
 const { Actuator } = require("./sinks/actuator.js");
 const { MqttSink, resolveBroker } = require("./sinks/mqtt.js");
@@ -76,6 +78,10 @@ async function main() {
   });
   if (splinkCfg.enabled) splink.start();
 
+  const ecowittCfg = opt.ecowitt || {};
+  const ecowitt = new EcowittPoller({ urls: ecowittCfg.urls, pollSeconds: ecowittCfg.poll_seconds });
+  if (ecowittCfg.enabled) ecowitt.start();
+
   const mqttCfg = opt.mqtt || {};
   const mqttSink = new MqttSink({
     enabled: mqttCfg.enabled,
@@ -90,6 +96,10 @@ async function main() {
   const au = Object.assign({ seed_load_kwh: 30, window_days: 7 }, opt.autonomy);
   const saved = loadState();
   const history = LoadHistory.fromJSON(saved.history, au.window_days, au.seed_load_kwh);
+
+  // Per-array factors learned so far (irradiance -> available kW) survive restarts.
+  const solarCfg = opt.solar || {};
+  const estimator = new SolarEstimator({ acKw: solarCfg.inverter_ac_kw || 10, state: saved.solar });
 
   // ---- web UI (ingress) ----------------------------------------------------
   // What the UI shows is exactly what the last tick decided, plus the context it
@@ -136,7 +146,7 @@ async function main() {
     const socEnt = pick([["splink", sp.soc], ["ha", ha.number(sources.battery_soc)]]);
     const loadEnt = pick([["splink", sp.loadKw], ["ha", kw(ha.number(sources.load_power))]]);
     const pvEnt = pick([["splink", sp.pvKw], ["ha", kw(ha.number(sources.pv_power))], ["fronius", fronPv]]);
-    const pvKw = pvEnt.value, pvAge = pvEnt.ageSec;
+    const pvAge = pvEnt.ageSec;
     const toutEnt = ha.number(sources.outdoor_temp);
     const fcEnt = ha.number(sources.pv_forecast_today);
 
@@ -152,10 +162,40 @@ async function main() {
     const loadKw = Number.isFinite(loadEnt.value) && loadEnt.ageSec < STALE_SEC ? loadEnt.value : NaN;
     history.add(now.toISOString().slice(0, 10), loadKw, tickSec);
 
+    // --- available solar ---
+    // Off grid the inverters are throttled to the load once the battery is full,
+    // so delivered PV understates the sun. Estimate what each array COULD give
+    // from irradiance, learning each array's factor while it's unthrottled.
+    const irrEnt = pick([["ecowitt", ecowitt.irradiance], ["ha", ha.number(sources.irradiance)]]);
+    const irradiance = irrEnt.ageSec < STALE_SEC ? irrEnt.value : NaN;
+    const pvDelivered = Number.isFinite(pvEnt.value) && pvAge < STALE_SEC ? pvEnt.value : NaN;
+    const arrays = (sp.inverters || []).map((i) => ({
+      key: i.key, name: i.name, kwp: solarCfg.kwp || i.kwp,
+      kw: i.powerKw.ageSec < STALE_SEC ? i.powerKw.value : NaN,
+    }));
+    const unconstrained = isUnconstrained({
+      socPct: socUsable ? socEnt.value : NaN,
+      batteryKw: sp.batteryKw && sp.batteryKw.ageSec < STALE_SEC ? sp.batteryKw.value : NaN,
+      pvKw: pvDelivered,
+      loadKw, chargeLimitKw: sp.chargeLimitKw,
+    });
+    estimator.learn({ now, irradiance, inverters: arrays, unconstrained });
+    const perArray = Number.isFinite(irradiance) ? estimator.estimate({ now, irradiance, inverters: arrays }) : [];
+    const pvAvailable = perArray.length && perArray.every((a) => Number.isFinite(a.availableKw))
+      ? perArray.reduce((t, a) => t + a.availableKw, 0) : NaN;
+    // Dispatch spends what the sun can give, not just what was delivered.
+    const pvKw = Number.isFinite(pvAvailable) ? Math.max(pvDelivered || 0, pvAvailable) : pvDelivered;
+    const solar = {
+      irradiance: irrEnt, deliveredKw: pvDelivered, availableKw: pvAvailable,
+      headroomKw: Number.isFinite(pvAvailable) && Number.isFinite(pvDelivered) ? Math.max(0, pvAvailable - pvDelivered) : NaN,
+      curtailed: perArray.some((a) => a.curtailed), unconstrained,
+      charger: sp.charger || null, arrays: perArray.map((a, n) => ({ ...a, name: arrays[n].name })),
+    };
+
     const ctx = buildContext({
       now,
       soc,
-      pvKw: Number.isFinite(pvKw) && pvAge < STALE_SEC ? pvKw : 0,   // unknown PV = assume none
+      pvKw: Number.isFinite(pvKw) ? pvKw : 0,   // unknown PV = assume none
       loadKw,
       toutC: Number.isFinite(toutEnt.value) ? toutEnt.value : 20,
       forecastKwh: Number.isFinite(fcEnt.value) ? fcEnt.value : NaN,
@@ -194,20 +234,25 @@ async function main() {
       time: now.toISOString(), version: VERSION, dryRun, safeMode, tickSec, battery,
       inputs: { soc: socEnt, loadKw: loadEnt, pvKw: pvEnt, batteryKw: sp.batteryKw || null, energy: sp.energy || null, inverters: sp.inverters || [] },
       splinkSource: splinkCfg.enabled ? splink.source : null,
+      solar,
       ctx,
       result: summarise(result),
       devices: devices.map((d) => ({ id: d.id, name: d.name, switch: d.switch || null })),
     };
 
     await actuator.apply(result.decisions);
-    mqttSink.publishTick({ ctx, result, safeMode, dryRun, inputs: snapshot.inputs });
-    saveState({ history: history.toJSON(), updated: now.toISOString() });
+    mqttSink.publishTick({ ctx, result, safeMode, dryRun, inputs: snapshot.inputs, solar });
+    saveState({ history: history.toJSON(), solar: estimator.toJSON(), updated: now.toISOString() });
   }
 
   setInterval(runTick, tickSec * 1000);
   setTimeout(runTick, 3000);
 
-  process.on("SIGTERM", () => { log.info("shutting down"); saveState({ history: history.toJSON() }); process.exit(0); });
+  process.on("SIGTERM", () => {
+    log.info("shutting down");
+    saveState({ history: history.toJSON(), solar: estimator.toJSON() });
+    process.exit(0);
+  });
 }
 
 main().catch((e) => { log.error("fatal", e.stack || e.message); process.exit(1); });

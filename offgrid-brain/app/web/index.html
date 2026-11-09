@@ -111,6 +111,10 @@
       <h2>Battery and floors <span class="muted">Charge rungs fill the battery to their level and stop anything below them discharging past it.</span></h2>
       <div class="gauge"><div class="bar" id="bar"></div></div>
     </div>
+    <div class="card" id="solar-card" hidden>
+      <h2>Solar arrays <span class="muted">Off grid the inverters are throttled to the load once the battery is full. Available is what the sun could give, from irradiance and each array's learned factor.</span></h2>
+      <div id="solar"></div>
+    </div>
     <div class="card">
       <h2>Dispatch list
         <span class="muted">Walked top to bottom each tick: solar first, then battery down to each entry's floor.</span>
@@ -223,7 +227,10 @@ function renderLive() {
   const tiles = [
     ["Battery", `${fmt(i.soc.value)}%`, src(i.soc)],
     ["Load", watts(i.loadKw.value), src(i.loadKw)],
-    ["Solar", watts(i.pvKw.value), src(i.pvKw)],
+    s.solar && Number.isFinite(s.solar.availableKw)
+      ? ["Solar", `${watts(s.solar.deliveredKw)} / ${watts(s.solar.availableKw)}`,
+         `delivered / available${s.solar.curtailed ? " · throttled" : ""} · ${fmt(s.solar.irradiance.value, 0)} W/m²`]
+      : ["Solar", watts(i.pvKw.value), src(i.pvKw)],
     ["Autonomy", `${fmt(s.ctx.autonomy, 2)} d`, "usable battery ÷ worst expected daily deficit"],
     ["Charging", watts(s.result.chargeKw), `spare solar after the list: ${watts(s.result.budgetKw)}`],
     ["Devices", `${running} / ${s.result.decisions.length}`, `running · ${s.result.decisions.length - running} shed`],
@@ -238,9 +245,28 @@ function renderLive() {
     ${[...new Set(rungs)].filter((r) => r !== s.battery.reserve_pct && r < 100)
       .map((r) => `<div class="rung" style="left:${r}%"><span>${r}%</span></div>`).join("")}`;
 
+  renderSolar(s.solar);
   $("list").innerHTML = s.result.trace.length ? s.result.trace.map(renderRow).join("") : '<div class="empty">The list is empty.</div>';
   $("vars").innerHTML = Object.entries(s.ctx).map(([k, v]) =>
     `<span>${k}=${typeof v === "number" ? (Number.isInteger(v) ? v : v.toFixed(2)) : esc(v)}</span>`).join("");
+}
+
+function renderSolar(sol) {
+  $("solar-card").hidden = !sol || !sol.arrays || !sol.arrays.length;
+  if ($("solar-card").hidden) return;
+  const head = `<div class="vars"><span>irradiance ${fmt(sol.irradiance.value, 0)} W/m² (${sol.irradiance.from}, ${ago(sol.irradiance.ageSec)})</span>
+    <span>charger ${esc(sol.charger || "—")}</span>
+    <span>${sol.unconstrained ? "unthrottled: learning" : "not learning (battery full or near the charge limit)"}</span></div>`;
+  const rows = sol.arrays.map((a) => {
+    const pct = a.availableKw > 0 ? Math.min(100, (100 * (a.kw || 0)) / a.availableKw) : 0;
+    return `<div class="row"><div class="idx"></div>
+      <div><div class="name">${esc(a.name)} <span class="muted">${fmt(a.kwp, 2)} kWp</span></div>
+        <div class="why">Delivering ${watts(a.kw)} of ${watts(a.availableKw)} available · headroom ${watts(a.headroomKw)} ·
+          factor ${fmt(a.k, 2)} from ${a.samples} sample${a.samples === 1 ? "" : "s"}${a.samples ? "" : " (typical value until it learns)"}</div>
+        <div class="split"><div class="pv" style="width:${pct}%"></div></div></div>
+      <div><span class="chip ${a.curtailed ? "partial" : "granted"}">${a.curtailed ? "throttled" : "at capacity"}</span></div></div>`;
+  }).join("");
+  $("solar").innerHTML = head + rows;
 }
 
 async function refresh() {

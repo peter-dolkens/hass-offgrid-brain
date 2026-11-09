@@ -1,0 +1,105 @@
+{"common_list":[{
+	"id":	"0x02",
+	"val":	"13.2",
+	"unit":	"C"
+}, {
+	"id":	"0x07",
+	"val":	"76%"
+}, {
+	"id":	"3",
+	"val":	"13.2",
+	"unit":	"C"
+}, {
+	"id":	"5",
+	"val":	"0.364 kPa"
+}, {
+	"id":	"0x03",
+	"val":	"9.1",
+	"unit":	"C"
+}, {
+	"id":	"0x0B",
+	"val":	"0.00 km/h"
+}, {
+	"id":	"0x0C",
+	"val":	"2.52 km/h"
+}, {
+	"id":	"0x19",
+	"val":	"23.40 km/h"
+}, {
+	"id":	"0x15",
+	"val":	"0.00 W/m2"
+}, {
+	"id":	"0x17",
+	"val":	"0"
+}, {
+	"id":	"0x0A",
+	"val":	"343"
+}, {
+	"id":	"0x6D",
+	"val":	"331"
+}],"piezoRain":[{
+	"id":	"srain_piezo",
+	"val":	"0"
+}, {
+	"id":	"0x0D",
+	"val":	"0.0 mm"
+}, {
+	"id":	"0x0E",
+	"val":	"0.0 mm/Hr"
+}, {
+	"id":	"0x7C",
+	"val":	"0.0 mm"
+}, {
+	"id":	"0x10",
+	"val":	"0.0 mm"
+}, {
+	"id":	"0x11",
+	"val":	"0.0 mm"
+}, {
+	"id":	"0x12",
+	"val":	"23.3 mm"
+}, {
+	"id":	"0x13",
+	"val":	"401.5 mm",
+	"battery":	"5",
+	"voltage":	"3.12",
+	"ws90cap_volt":	"2.5",
+	"ws90_ver":	"143"
+}],"wh25":[{
+	"intemp":	"21.0",
+	"unit":	"C",
+	"inhumi":	"55%",
+	"abs":	"1007.9 hPa",
+	"rel":	"1007.9 hPa"
+}],"ch_soil":[{
+	"channel":	"1",
+	"name":	"",
+	"battery":	"5",
+	"voltage":	"1.70",
+	"humidity":	"24%"
+}],"ch_lds":[{
+	"channel":	"1",
+	"name":	"",
+	"unit":	"mm",
+	"battery":	"5",
+	"voltage":	"3.28",
+	"air":	"--.-",
+	"depth":	"--.-",
+	"total_height":	"2300",
+	"total_heat":	"29660"
+}, {
+	"channel":	"2",
+	"name":	"",
+	"unit":	"mm",
+	"battery":	"5",
+	"voltage":	"3.28",
+	"air":	"1654 mm",
+	"depth":	"946 mm",
+	"total_height":	"2600",
+	"total_heat":	"8567"
+}],"debug":[{
+	"heap":	"68020",
+	"runtime":	"20493074",
+	"usr_interval":	"60",
+	"is_cnip":	false
+}]}

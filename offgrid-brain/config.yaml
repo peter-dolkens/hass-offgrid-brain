@@ -1,6 +1,6 @@
 # Home Assistant add-on manifest. Installs into a supervised HAOS instance.
 name: Off-Grid Brain
-version: "0.7.0"
+version: "0.8.0"
 slug: offgrid_brain
 description: >-
   Load-shedding and dispatch brain for an off-grid solar + battery house. Walks
@@ -38,6 +38,7 @@ options:
     load_power: ""
     outdoor_temp: ""
     pv_forecast_today: ""
+    irradiance: ""
   battery:
     capacity_kwh: 51.8
     inverter_kw: 7.5
@@ -53,6 +54,12 @@ options:
     fast_seconds: 3
     access_client_id: ""
     access_client_secret: ""
+  ecowitt:
+    enabled: false
+    urls: []
+    poll_seconds: 10
+  solar:
+    inverter_ac_kw: 10
   fronius:
     enabled: false
     hosts: []
@@ -79,6 +86,8 @@ schema:
     load_power: str?
     outdoor_temp: str?
     pv_forecast_today: str?
+    # Solar irradiance, W/m² (fallback when no Ecowitt gateway is polled directly).
+    irradiance: str?
   battery:
     capacity_kwh: float
     inverter_kw: float
@@ -100,6 +109,18 @@ schema:
     # Cloudflare Access service token, if the tunnel is behind Access.
     access_client_id: str?
     access_client_secret: password?
+  # Ecowitt gateway (GW1100/GW2000/GW3000) local API, for solar irradiance. List a
+  # gateway's Ethernet and Wi-Fi addresses to survive either link dropping.
+  ecowitt:
+    enabled: bool
+    urls:
+      - url
+    poll_seconds: int(5,300)
+  # Available-solar estimate: each AC-coupled inverter's AC ceiling, and an
+  # optional array size override (default: the inverter's configured PV peak).
+  solar:
+    inverter_ac_kw: float
+    kwp: float?
   fronius:
     enabled: bool
     hosts:

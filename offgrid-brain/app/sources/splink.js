@@ -32,6 +32,7 @@ function parseBridge(doc, now = Date.now()) {
   const spOk = !!(sp && sp.healthy);
   const soc = spOk ? reading(sp.battery && sp.battery.soc_percent, sp.live_read_at, now) : NONE;
   const loadKw = spOk ? reading(sp.ac && sp.ac.load_kilowatts, sp.live_read_at, now) : NONE;
+  // Positive while CHARGING, negative while discharging (verified against SoC trend).
   const batteryKw = spOk ? reading(sp.battery && sp.battery.kilowatts, sp.live_read_at, now) : NONE;
 
   // PV is only trustworthy when every inverter reported; a partial sum would
@@ -49,6 +50,8 @@ function parseBridge(doc, now = Date.now()) {
   const inverters = inv.map((i, n) => ({
     key: slug(i.name || i.host || `inverter_${n + 1}`),
     name: i.custom_name || i.name || `Inverter ${n + 1}`,
+    // The inverter's configured PV array peak power (Fronius "PVPower").
+    kwp: Number.isFinite(i.rated_watts) ? i.rated_watts / 1000 : NaN,
     powerKw: i.healthy && i.ac ? reading(i.ac.power_watts / 1000, i.taken_at, now) : NONE,
     energyKwh: i.healthy && i.energy ? reading(i.energy.total_wh / 1000, i.taken_at, now) : NONE,
   }));
@@ -63,7 +66,11 @@ function parseBridge(doc, now = Date.now()) {
     loadKwh: day(today.ac_load_kwh),
     generatorKwh: day(today.ac_input_kwh),
   };
-  return { soc, loadKw, batteryKw, pvKw, inverters, energy, healthy: spOk };
+  // What the battery inverter is doing with AC-coupled solar: in float it throttles
+  // the inverters to the load; while charging it takes up to the charge limit.
+  const charger = spOk && typeof sp.charger === "string" ? sp.charger : null;
+  const chargeLimitKw = spOk && sp.regulation ? sp.regulation.charge_power_limit_kilowatts : NaN;
+  return { soc, loadKw, batteryKw, pvKw, inverters, energy, charger, chargeLimitKw, healthy: spOk };
 }
 
 /** Entity-safe key from an inverter name ("Right" -> "right"). */

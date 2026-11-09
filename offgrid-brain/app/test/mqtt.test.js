@@ -49,10 +49,10 @@ t("each solar inverter gets its own power and energy entities", () => {
   assert.strictEqual(cfg.state_class, "total_increasing");
 });
 
-t("battery power is published in W, negative while charging", () => {
+t("battery power is published for the Energy dashboard: positive while discharging", () => {
   const { sink, sent } = capture();
-  sink.publishTick(tick({ batteryKw: fresh(-0.4), energy: null }));
-  assert.strictEqual(sent["offgrid_brain/battery_power"], "-400");
+  sink.publishTick(tick({ batteryKw: fresh(-0.4), energy: null }));   // bridge: -0.4 kW = discharging
+  assert.strictEqual(sent["offgrid_brain/battery_power"], "400");
   const cfg = JSON.parse(sent["homeassistant/sensor/offgrid_brain/battery_power/config"]);
   assert.deepStrictEqual([cfg.device_class, cfg.state_class, cfg.unit_of_measurement], ["power", "measurement", "W"]);
 });

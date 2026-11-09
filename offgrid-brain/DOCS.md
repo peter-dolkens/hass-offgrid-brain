@@ -48,7 +48,8 @@ Each input takes the **first fresh reading** (newer than 300 s) from these, in o
 |---|---|---|---|
 | Battery SoC | `splink` | `sources.battery_soc` | none: safe mode |
 | House load | `splink` | `sources.load_power` | none |
-| PV | `splink` | `sources.pv_power` | `fronius` |
+| PV (delivered) | `splink` | `sources.pv_power` | `fronius` |
+| Irradiance | `ecowitt` | `sources.irradiance` | none: no available-solar estimate |
 
 The log line for every tick says which source each reading came from, e.g.
 `soc=87.2%(splink) load=640W(splink) pv=3120W(ha)`.
@@ -85,6 +86,45 @@ when the bridge last **read the hardware** (`live_read_at`), not from when the
 document was fetched. A bridge whose serial link has wedged keeps serving its last
 reading, and that reading ages into safe mode instead of looking current. PV is
 used only when every inverter reported, so a partial sum never under-reads solar.
+
+### Available solar (curtailment)
+
+Off grid, the battery inverter **throttles AC-coupled solar to the load once the
+battery is full**. The inverters' output is then what was *delivered*, not what the
+sun could give, so on its own it would never show surplus to spend. The brain
+estimates what each array **could** produce:
+
+    available = irradiance / 1000 × array kWp × k,  capped at the inverter's AC rating
+
+- **Array kWp** comes from each inverter's own configuration through the bridge
+  (Fronius `PVPower`). `solar.kwp` overrides it and `solar.inverter_ac_kw` sets the cap.
+- **k** captures everything a horizontal irradiance sensor doesn't know about the
+  array: tilt and azimuth, temperature, soiling and losses. It is **learned per
+  inverter and per half-hour of the day**, only from moments the array is
+  demonstrably unthrottled: the battery taking at least 0.5 kW below 99.5% SoC, and
+  solar well under load plus the charge limit. The charger *state* isn't used,
+  because an SP PRO stays in "Long Term Float" while topping up each morning. A
+  half-hour with few samples leans on a typical 0.85 until it has more. Learned
+  values persist across restarts.
+- For **dispatch** the brain spends the larger of delivered and available solar,
+  so surplus-only loads can run on a full battery. An array whose available power
+  exceeds its delivered power by a margin is reported as **throttled**.
+
+On a lightly loaded site the battery is usually full within the first hour of sun,
+so only early-morning half-hours learn. The rest use the typical value until the
+house draws the battery down further.
+
+### `ecowitt`: irradiance from an Ecowitt gateway
+
+```yaml
+ecowitt:
+  enabled: true
+  urls: ["http://192.168.1.30/", "http://192.168.1.31/"]   # e.g. Ethernet, then Wi-Fi
+  poll_seconds: 10
+```
+
+Reads solar radiation (`0x15`) from the gateway's local API (`/get_livedata_info`).
+It needs a solar sensor on the gateway, such as a WS90.
 
 ### `sources`: logical name → HA entity
 
@@ -142,6 +182,10 @@ Known GEN24 limitations:
   `PAC` is *delivered* power, not available solar.
 
 ### `mqtt`: optional bridge
+
+Solar entities: irradiance, available solar (total and per array), solar headroom
+(available minus delivered), and a **Solar curtailed** binary sensor.
+
 
 Publishes the brain's state as an **Off-Grid Brain** device via MQTT discovery:
 battery SoC (the real reading, even in safe mode), load, solar, battery, charging
