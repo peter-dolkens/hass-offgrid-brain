@@ -2,7 +2,7 @@
    /config/settings.json, next to policy.json.
 
    The add-on's own options keep only what has to be there: the log level and
-   secrets (MQTT credentials, the Cloudflare Access token), which are never served
+   the MQTT credentials, which are never served
    back to the web app. Everything else lives here so it can be edited with entity
    pickers and applied without a restart.
 
@@ -98,7 +98,7 @@ function normalise(from) {
   for (const k of SECTIONS) {
     if (from[k] && typeof from[k] === "object") Object.assign(out[k], from[k]);
   }
-  // Secrets never live here, even if the source had them (add-on options do).
+  // Pre-0.13 bridge settings could carry a Cloudflare Access token; it's gone.
   delete out.splink.access_client_id;
   delete out.splink.access_client_secret;
   out.solar.inverters = upgradeInverters(out.solar, from.fronius);

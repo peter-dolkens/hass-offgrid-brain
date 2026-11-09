@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.13.0
+- Removed Cloudflare Access support: the `cloudflare_access` option and the
+  service-token headers on SP PRO bridge requests. The add-on Configuration screen
+  now holds only the log level and MQTT.
+
 ## 0.12.0
 - The add-on Configuration screen now holds only the log level, MQTT and the
   Cloudflare Access token. Everything else is in the web panel's Settings tab.

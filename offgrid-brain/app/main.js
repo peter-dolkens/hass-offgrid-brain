@@ -10,7 +10,7 @@
    Fail-safe here means fail-austere.
 
    Configuration comes from two places. The add-on options hold only the log level
-   and secrets (MQTT credentials, the Cloudflare Access token). Everything else is
+   and the MQTT credentials. Everything else is
    in /config/settings.json and /config/policy.json, edited from the web panel and
    applied live through applySettings() / applyPolicy(). */
 "use strict";
@@ -61,11 +61,6 @@ async function main() {
   }
   for (const p of validate(policy)) log.warn(`policy: ${p}`);
 
-  // Secrets stay in the add-on options; older installs had the Access token under splink.
-  const access = opt.cloudflare_access || {};
-  const accessId = access.client_id || (opt.splink && opt.splink.access_client_id) || "";
-  const accessSecret = access.client_secret || (opt.splink && opt.splink.access_client_secret) || "";
-
   // ---- long-lived parts ----------------------------------------------------
   const ha = new HAClient({ token: process.env.SUPERVISOR_TOKEN });
   ha.connect();
@@ -113,7 +108,6 @@ async function main() {
       if (splink) splink.stop();
       splink = new SplinkPoller({
         urls: next.splink.urls, pollSeconds: next.splink.poll_seconds, fastSeconds: next.splink.fast_seconds,
-        accessClientId: accessId, accessClientSecret: accessSecret,
       });
       if (next.splink.enabled) splink.start();
     }

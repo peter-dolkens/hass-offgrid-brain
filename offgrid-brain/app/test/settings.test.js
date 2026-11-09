@@ -20,20 +20,18 @@ const oldOptions = {
   log_level: "info", dry_run: true, tick_seconds: 5,
   sources: { battery_soc: "", irradiance: "" },
   battery: { capacity_kwh: 51.8, inverter_kw: 7.5, max_charge_kw: 7.5, reserve_pct: 10 },
-  splink: { enabled: true, urls: ["https://solar.example.com/"], poll_seconds: 15, fast_seconds: 3,
-            access_client_id: "id.access", access_client_secret: "s3cret" },
+  splink: { enabled: true, urls: ["https://solar.example.com/"], poll_seconds: 15, fast_seconds: 3 },
   ecowitt: { enabled: true, urls: ["http://192.168.1.30/", "http://192.168.1.31/"], poll_seconds: 10 },
   solar: { inverter_ac_kw: 10 },
   mqtt: { enabled: true, username: "brain", password: "pw" },
   devices: [{ id: "ev", kw: 7, switch: "switch.ev_contactor", min_dwell_seconds: 600 }],
 };
 
-t("seeding carries the old options over, without secrets", () => {
+t("seeding carries the old options over", () => {
   const s = Settings.normalise(oldOptions);
   assert.deepStrictEqual(s.splink.urls, ["https://solar.example.com/"]);
   assert.deepStrictEqual(s.ecowitt.urls, ["http://192.168.1.30/", "http://192.168.1.31/"]);
   assert.strictEqual(s.splink.enabled, true);
-  assert.ok(!("access_client_id" in s.splink) && !("access_client_secret" in s.splink), "no secrets in settings");
   assert.ok(!("mqtt" in s), "MQTT stays in the add-on options");
   assert.ok(!("devices" in s), "devices live in policy.json");
   assert.deepStrictEqual(Settings.check(s), []);

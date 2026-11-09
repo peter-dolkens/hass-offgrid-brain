@@ -1,6 +1,6 @@
 # Home Assistant add-on manifest. Installs into a supervised HAOS instance.
 name: Off-Grid Brain
-version: "0.12.0"
+version: "0.13.0"
 slug: offgrid_brain
 description: >-
   Load-shedding and dispatch brain for an off-grid solar + battery house. Walks
@@ -29,7 +29,7 @@ services:
   - mqtt:want
 
 # The brain is configured from its web panel (Settings tab). These options hold
-# only the log level and secrets, which are never served to the web panel.
+# only the log level and the MQTT credentials, which are never served to the web panel.
 options:
   log_level: info
   mqtt:
@@ -39,9 +39,6 @@ options:
     port: 1883
     username: ""
     password: ""
-  cloudflare_access:
-    client_id: ""
-    client_secret: ""
 
 schema:
   log_level: list(debug|info|warn|error)
@@ -54,8 +51,3 @@ schema:
     port: port?
     username: str?
     password: password?
-  # Cloudflare Access service token, sent when reading the SP PRO bridge through a
-  # tunnel that's protected by Cloudflare Access. Leave blank otherwise.
-  cloudflare_access:
-    client_id: str?
-    client_secret: password?

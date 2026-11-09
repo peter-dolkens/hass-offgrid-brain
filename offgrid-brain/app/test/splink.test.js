@@ -103,24 +103,6 @@ t("poller falls back through urls in order and keeps the last good document", as
   } finally { server.close(); }
 });
 
-t("poller sends Cloudflare Access headers when configured", async () => {
-  let seen = null;
-  const server = http.createServer((req, res) => {
-    seen = req.headers;
-    res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(fixture));
-  });
-  await new Promise((r) => server.listen(0, "127.0.0.1", r));
-  try {
-    const p = new SplinkPoller({
-      urls: [`http://127.0.0.1:${server.address().port}/`],
-      accessClientId: "id.access", accessClientSecret: "s3cret",
-    });
-    await p.pollOnce();
-    assert.strictEqual(seen["cf-access-client-id"], "id.access");
-    assert.strictEqual(seen["cf-access-client-secret"], "s3cret");
-  } finally { server.close(); }
-});
-
 t("the fast window gives SoC and load, aged from its taken_at", () => {
   const at = Date.parse(fastFixture.taken_at);
   const r = parseFast(fastFixture, at + 3000);

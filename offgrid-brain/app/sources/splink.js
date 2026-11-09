@@ -98,15 +98,11 @@ function combine(doc, fastDoc, now = Date.now()) {
 }
 
 class SplinkPoller {
-  constructor({ urls, pollSeconds, fastSeconds, accessClientId, accessClientSecret, timeoutMs }) {
+  constructor({ urls, pollSeconds, fastSeconds, timeoutMs }) {
     this.urls = (urls || []).filter(Boolean);
     this.pollSeconds = pollSeconds || 15;           // full document: PV, energy totals
     this.fastSeconds = fastSeconds == null ? 3 : fastSeconds;   // /fast: SoC + load; 0 = off
     this.timeoutMs = timeoutMs || 8000;
-    // Cloudflare Access service-token headers, for a tunnel behind Access.
-    this.headers = accessClientId
-      ? { "CF-Access-Client-Id": accessClientId, "CF-Access-Client-Secret": accessClientSecret || "" }
-      : {};
     this.doc = null;
     this.fastDoc = null;
     this.fastSupported = true;
@@ -119,7 +115,7 @@ class SplinkPoller {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), this.timeoutMs);
     try {
-      const r = await fetch(url, { signal: ac.signal, headers: this.headers, redirect: "error" });
+      const r = await fetch(url, { signal: ac.signal, redirect: "error" });
       if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
       const doc = await r.json();
       if (!isValid(doc)) throw new Error(`not a splink ${what}`);

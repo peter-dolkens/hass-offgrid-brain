@@ -49,11 +49,10 @@ kept as `.bak`). Devices are edited in the same tab and stored with the dispatch
 list in `/config/policy.json`. The YAML below shows the same keys as they appear
 in `settings.json`.
 
-The add-on's own **Configuration** screen holds only the log level and secrets:
-the MQTT connection, and a Cloudflare Access token for reading the SP PRO bridge
-through an Access-protected tunnel. Installs from before 0.9.0 had everything there;
-0.9.0–0.11 copied it into `settings.json` (and device switches into `policy.json`)
-on first start, and 0.12.0 removes the old fields.
+The add-on's own **Configuration** screen holds only the log level and the MQTT
+connection. Installs from before 0.9.0 had everything there; 0.9.0–0.11 copied it
+into `settings.json` (and device switches into `policy.json`) on first start, and
+0.12.0 removed the old fields.
 
 ### Battery and solar inverters
 
@@ -104,8 +103,6 @@ splink:
     - https://solar.example.com/       # a tunnel to it: works from off site
   poll_seconds: 15                     # full document: PV and everything else
   fast_seconds: 3                      # /fast window: SoC and load, for shedding
-  access_client_id: ""                 # Cloudflare Access service token, if the
-  access_client_secret: ""             # tunnel is behind Access
 ```
 
 The bridge is a **connection**: the battery and any inverter whose integration is
