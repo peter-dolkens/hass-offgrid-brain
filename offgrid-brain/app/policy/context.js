@@ -52,8 +52,8 @@ class LoadHistory {
 /* autonomy = usable battery (kWh) / predicted daily deficit, capped at 99.
 
    sim.js uses the WORST day in a 3-day lookahead of ACTUAL future PV. The brain
-   has no such oracle: it uses a forecast entity if one is mapped (e.g. Solcast /
-   Forecast.Solar), otherwise it falls back to the seed. This is the single
+   has no such oracle: it uses the worse of today's and tomorrow's forecast totals
+   (HA's Energy forecasts, or a mapped entity), else assumes no PV at all. This is the single
    biggest known sim/reality gap — but autonomy self-corrects every tick against
    real SoC, which is exactly why the worst-day ladder was chosen over separate
    per-regime ladders. */
@@ -66,7 +66,7 @@ function autonomyOf({ socPct, capacityKwh, reservePct, expectedLoadKwh, forecast
 }
 
 /** Assemble the full variable set for dispatch.decide(). */
-function buildContext({ now, soc, pvKw, loadKw, toutC, forecastKwh, history, battery }) {
+function buildContext({ now, soc, pvKw, loadKw, toutC, forecastKwh, forecastNext24Kwh = forecastKwh, history, battery }) {
   const hour = now.getHours();
   const dow = (now.getDay() + 6) % 7;          // sim.js: 0 = Monday
   const doy = dayOfYear(now);
@@ -87,9 +87,9 @@ function buildContext({ now, soc, pvKw, loadKw, toutC, forecastKwh, history, bat
     surplus: Math.max(0, pvKw - (loadKw || 0)),  // overwritten per-entry during the walk
     tout: toutC,
     // sim.js `forecast` = next 24 h PV / seasonal median. Approximated as the
-    // forecast entity over the trailing expected daily load; 1.0 when unknown.
-    forecast: Number.isFinite(forecastKwh) && expectedLoadKwh > 0
-      ? forecastKwh / expectedLoadKwh
+    // next 24 h of forecast PV over the trailing expected daily load; 1.0 when unknown.
+    forecast: Number.isFinite(forecastNext24Kwh) && expectedLoadKwh > 0
+      ? forecastNext24Kwh / expectedLoadKwh
       : 1,
     used: 0,                                     // per-device daily budgets: v0.2
     gap: 0,                                      // zone temperature delta: v0.2

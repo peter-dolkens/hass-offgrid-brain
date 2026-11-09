@@ -472,7 +472,7 @@ const FIELDS = [
   ["Control", "tick_seconds", "int", "Tick (s)", "How often the dispatch list is walked."],
   ["Readings from Home Assistant", "sources.irradiance", "entity", "Irradiance", "Only needed without an Ecowitt gateway.", "irradiance"],
   ["Readings from Home Assistant", "sources.outdoor_temp", "entity", "Outdoor temperature", "", "temperature"],
-  ["Readings from Home Assistant", "sources.pv_forecast_today", "entity", "Solar forecast today", "kWh.", "energy"],
+  ["Readings from Home Assistant", "sources.pv_forecast_today", "entity", "Solar forecast override", "kWh for the day. Leave empty to use the forecasts attached to solar in HA's Energy dashboard (e.g. Forecast.Solar).", "energy"],
   ["SP PRO bridge (splink)", "splink.enabled", "bool", "Enabled", "The connection the battery and inverters use when their integration is the bridge."],
   ["SP PRO bridge (splink)", "splink.urls", "list", "URLs", "One per line, tried in order: LAN first, tunnel second."],
   ["SP PRO bridge (splink)", "splink.poll_seconds", "int", "Full read (s)", "PV and energy counters."],

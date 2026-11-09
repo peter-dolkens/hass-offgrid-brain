@@ -22,6 +22,7 @@ const { HAClient } = require("./sources/ha.js");
 const { InverterSet } = require("./sources/inverters.js");
 const { readBattery, batteryEntities } = require("./sources/battery.js");
 const { SplinkPoller } = require("./sources/splink.js");
+const { SolarForecast } = require("./sources/forecast.js");
 const { EcowittPoller } = require("./sources/ecowitt.js");
 const { SolarEstimator, isUnconstrained } = require("./policy/solar.js");
 const { pick, STALE_SEC } = require("./sources/pick.js");
@@ -64,6 +65,10 @@ async function main() {
   // ---- long-lived parts ----------------------------------------------------
   const ha = new HAClient({ token: process.env.SUPERVISOR_TOKEN });
   ha.connect();
+  // Hourly PV forecast from whatever forecast integrations the Energy dashboard has.
+  const forecast = new SolarForecast({ ha });
+  ha.onReady = () => forecast.refresh().catch((e) => log.warn("solar forecast unavailable", e.message));
+  forecast.start();
 
   const mqttCfg = opt.mqtt || {};
   const mqttSink = new MqttSink({
@@ -204,7 +209,12 @@ async function main() {
     const pvEnt = pick([["inverters", invSum], ["splink", inv.length ? null : sp.pvKw]]);
     const pvAge = pvEnt.ageSec;
     const toutEnt = ha.number(sources.outdoor_temp);
-    const fcEnt = ha.number(sources.pv_forecast_today);
+    // Solar forecast: a mapped entity overrides; otherwise HA's Energy forecasts.
+    const fcEnt = ha.energyKwh(sources.pv_forecast_today);
+    const fc = forecast.read(now.getTime());
+    const fcFresh = fc.ageSec < 3 * 3600;
+    const forecastKwh = Number.isFinite(fcEnt.value) ? fcEnt.value : fcFresh ? fc.worstDayKwh : NaN;
+    const forecastNext24Kwh = Number.isFinite(fcEnt.value) ? fcEnt.value : fcFresh ? fc.next24Kwh : NaN;
 
     // --- fail-austere on a missing/stale SoC ---
     const socUsable = Number.isFinite(socEnt.value) && socEnt.ageSec < STALE_SEC;
@@ -260,7 +270,8 @@ async function main() {
       pvKw: Number.isFinite(pvKw) ? pvKw : 0,   // unknown PV = assume none
       loadKw,
       toutC: Number.isFinite(toutEnt.value) ? toutEnt.value : 20,
-      forecastKwh: Number.isFinite(fcEnt.value) ? fcEnt.value : NaN,
+      forecastKwh,
+      forecastNext24Kwh,
       history,
       battery,
     });
@@ -297,6 +308,10 @@ async function main() {
       inputs: { soc: socEnt, loadKw: loadEnt, pvKw: pvEnt, batteryKw: batt.source === "none" ? null : batt.batteryKw, energy: batt.energy, inverters: inv },
       splinkSource: settings.splink.enabled ? splink.source : null,
       solar,
+      forecast: {
+        from: Number.isFinite(fcEnt.value) ? "entity" : fcFresh && fc.entries ? "energy" : "none",
+        worstDayKwh: forecastKwh, next24Kwh: forecastNext24Kwh, days: fc.days, entries: fc.entries, ageSec: fc.ageSec,
+      },
       ctx,
       result: summarise(result),
       devices: policy.devices.map((d) => ({ id: d.id, name: d.name, switch: d.switch || null })),
