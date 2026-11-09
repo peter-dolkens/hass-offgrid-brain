@@ -37,7 +37,9 @@ async function main() {
   log.setLevel(opt.log_level || "info");
 
   const dryRun = opt.dry_run !== false;    // default ON — must be explicitly disabled
-  const tickSec = opt.tick_seconds || 30;
+  // Short by default: shedding has to act within the inverter's surge window, and
+  // the walk itself costs microseconds. Per-device dwell stops relays chattering.
+  const tickSec = opt.tick_seconds || 5;
   const battery = Object.assign(
     { capacity_kwh: 51.8, inverter_kw: 7.5, max_charge_kw: 7.5, reserve_pct: 10 },
     opt.battery
@@ -68,6 +70,7 @@ async function main() {
   const splink = new SplinkPoller({
     urls: splinkCfg.urls,
     pollSeconds: splinkCfg.poll_seconds,
+    fastSeconds: splinkCfg.fast_seconds,
     accessClientId: splinkCfg.access_client_id,
     accessClientSecret: splinkCfg.access_client_secret,
   });
@@ -114,6 +117,8 @@ async function main() {
 
   // ---- tick ----------------------------------------------------------------
   let ticking = false;
+  let lastSignature = null, lastInfoAt = 0;
+  const HEARTBEAT_MS = 5 * 60 * 1000;
   function runTick() {
     if (ticking) return;
     ticking = true;
@@ -161,14 +166,22 @@ async function main() {
     const result = decide(policy, ctx, limits);
     for (const e of result.errors) log.error(`policy expression: ${e}`);
 
-    log.info(
+    // Log at info only when what runs changes (and as a heartbeat); every tick at debug.
+    const line =
       `tick soc=${Number.isFinite(socEnt.value) ? socEnt.value.toFixed(1) : "??"}%(${socEnt.from}) ` +
       `load=${Number.isFinite(loadKw) ? (loadKw * 1000).toFixed(0) : "??"}W(${loadEnt.from}) ` +
       `pv=${(ctx.pv * 1000).toFixed(0)}W(${pvEnt.from}) ` +
       `autonomy=${ctx.autonomy.toFixed(2)}d floor=${result.floorPct}% ` +
       `run=[${result.decisions.filter((d) => d.run).map((d) => d.id).join(",")}] ` +
-      `shed=[${result.shed.map((d) => d.id).join(",")}]`
-    );
+      `shed=[${result.shed.map((d) => d.id).join(",")}]`;
+    const signature = `${safeMode}|${result.decisions.map((d) => `${d.id}:${d.run}`).join(",")}`;
+    if (signature !== lastSignature || now - lastInfoAt >= HEARTBEAT_MS) {
+      log.info(line);
+      lastSignature = signature;
+      lastInfoAt = now;
+    } else {
+      log.debug(line);
+    }
     for (const s of result.shed) log.debug(`  shed ${s.id}: ${s.reason}`);
     if (result.deficitKw > 0) {
       // Everything sheddable is already off and the bank still cannot carry the

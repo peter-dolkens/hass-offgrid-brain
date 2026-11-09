@@ -1,0 +1,11 @@
+{
+    "taken_at": "2026-11-09T20:19:18.7489516+11:00",
+    "ac_load_kilowatts": 0.076,
+    "inverter_kilowatts": -0.075,
+    "battery_soc_percent": 99.824,
+    "battery_amps": -1.95,
+    "dc_amps": 1.95,
+    "charger": "Long Term Float",
+    "inverter_mode": "On",
+    "ac_source_status": "AC Source Not Present"
+}

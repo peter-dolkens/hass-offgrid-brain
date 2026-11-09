@@ -1,6 +1,6 @@
 # Home Assistant add-on manifest. Installs into a supervised HAOS instance.
 name: Off-Grid Brain
-version: "0.4.0"
+version: "0.5.0"
 slug: offgrid_brain
 description: >-
   Load-shedding and dispatch brain for an off-grid solar + battery house. Walks
@@ -30,7 +30,7 @@ services:
 
 options:
   dry_run: true
-  tick_seconds: 30
+  tick_seconds: 5
   log_level: info
   sources:
     battery_soc: ""
@@ -50,6 +50,7 @@ options:
     enabled: false
     urls: []
     poll_seconds: 15
+    fast_seconds: 3
     access_client_id: ""
     access_client_secret: ""
   fronius:
@@ -69,7 +70,7 @@ options:
 schema:
   # Master safety switch. true = decide and log, actuate NOTHING.
   dry_run: bool
-  tick_seconds: int(5,300)
+  tick_seconds: int(2,300)
   log_level: list(debug|info|warn|error)
   # Logical name -> HA entity_id. Every one optional; absent sources degrade safely.
   sources:
@@ -93,6 +94,9 @@ schema:
     urls:
       - url
     poll_seconds: int(5,300)
+    # The bridge's /fast window (SoC + load), re-read every few seconds for shedding.
+    # 0 turns it off; a bridge without /fast is detected and skipped automatically.
+    fast_seconds: int(0,60)
     # Cloudflare Access service token, if the tunnel is behind Access.
     access_client_id: str?
     access_client_secret: password?

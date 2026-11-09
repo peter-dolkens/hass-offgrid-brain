@@ -67,10 +67,18 @@ splink:
   urls:
     - http://192.168.1.50:8080/        # the bridge on the LAN: works through an internet outage
     - https://solar.example.com/       # a tunnel to it: works from off site
-  poll_seconds: 15
+  poll_seconds: 15                     # full document: PV and everything else
+  fast_seconds: 3                      # /fast window: SoC and load, for shedding
   access_client_id: ""                 # Cloudflare Access service token, if the
   access_client_secret: ""             # tunnel is behind Access
 ```
+
+Each URL is the bridge's base address: the brain reads the full document from it
+and the bridge's **fast window** from `<url>fast`. The fast window carries SoC and
+AC load re-read every few seconds, which is what shedding needs; the full document
+supplies PV and refreshes its SP PRO section only about every two minutes. Each
+reading comes from whichever is newer. A bridge without `/fast` is detected and
+skipped.
 
 URLs are tried in order and the first that answers wins. Freshness comes from
 when the bridge last **read the hardware** (`live_read_at`), not from when the
@@ -184,6 +192,9 @@ forecast used gap season autonomy`.
 
 ## Safety
 
+- **Tick rate:** the list is walked every `tick_seconds` (default 5 s), so a load
+  spike is acted on within seconds. The log gets an info line only when what runs
+  changes, plus a heartbeat every 5 minutes; every tick is logged at `debug`.
 - **`dry_run`** (default **on**): decide and log, actuate nothing.
 - **Safe mode:** if no fresh battery SoC is available (older than 300 s, or no
   source answers), the brain substitutes the reserve percentage rather than

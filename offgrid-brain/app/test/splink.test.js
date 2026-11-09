@@ -5,7 +5,7 @@ const assert = require("assert");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { parseBridge, SplinkPoller } = require("../sources/splink.js");
+const { parseBridge, parseFast, combine, SplinkPoller } = require("../sources/splink.js");
 const { pick, STALE_SEC } = require("../sources/pick.js");
 
 let pass = 0;
@@ -15,6 +15,7 @@ const t = (name, fn) => results.push(Promise.resolve().then(fn).then(
   (e) => { console.error(`  FAIL ${name}\n       ${e.message}`); process.exitCode = 1; }));
 
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "splink-bridge.json"), "utf8"));
+const fastFixture = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "splink-fast.json"), "utf8"));
 const clone = () => JSON.parse(JSON.stringify(fixture));
 const readAt = Date.parse(fixture.sp_pro.live_read_at);
 
@@ -117,6 +118,54 @@ t("poller sends Cloudflare Access headers when configured", async () => {
     await p.pollOnce();
     assert.strictEqual(seen["cf-access-client-id"], "id.access");
     assert.strictEqual(seen["cf-access-client-secret"], "s3cret");
+  } finally { server.close(); }
+});
+
+t("the fast window gives SoC and load, aged from its taken_at", () => {
+  const at = Date.parse(fastFixture.taken_at);
+  const r = parseFast(fastFixture, at + 3000);
+  assert.strictEqual(r.soc.value, fastFixture.battery_soc_percent);
+  assert.strictEqual(r.loadKw.value, fastFixture.ac_load_kilowatts);
+  assert.strictEqual(r.soc.ageSec, 3);
+  assert.ok(Number.isNaN(parseFast(null).soc.value));
+});
+
+t("combine takes each reading from whichever source is newer, PV from the full document", () => {
+  const full = clone();
+  full.sp_pro.live_read_at = "2026-01-01T00:00:00+00:00";
+  full.sp_pro.battery.soc_percent = 50;
+  full.fronius.forEach((i) => { i.taken_at = "2026-01-01T00:00:00+00:00"; i.ac.power_watts = 1000; });
+  const fast = { ...fastFixture, taken_at: "2026-01-01T00:01:50+00:00", battery_soc_percent: 51 };
+  const now = Date.parse("2026-01-01T00:02:00+00:00");
+  const r = combine(full, fast, now);
+  assert.deepStrictEqual([r.soc.value, r.soc.ageSec], [51, 10]);
+  assert.strictEqual(r.pvKw.value, 2);
+  // A stale fast window loses to a newer full read.
+  const r2 = combine(full, { ...fast, taken_at: "2025-12-31T23:00:00+00:00" }, now);
+  assert.strictEqual(r2.soc.value, 50);
+});
+
+t("poller reads /fast and stops asking a bridge that has none", async () => {
+  let fastHits = 0, haveFast = true;
+  const server = http.createServer((req, res) => {
+    if (req.url === "/fast") {
+      fastHits++;
+      if (!haveFast) { res.writeHead(404); return res.end(); }
+      res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify(fastFixture));
+    }
+    res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(fixture));
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const p = new SplinkPoller({ urls: [`http://127.0.0.1:${server.address().port}/`] });
+    assert.strictEqual(await p.pollFast(), true);
+    assert.strictEqual(p.fastDoc.battery_soc_percent, fastFixture.battery_soc_percent);
+    haveFast = false;
+    assert.strictEqual(await p.pollFast(), false);
+    assert.strictEqual(p.fastSupported, false);
+    const hits = fastHits;
+    await p.pollFast();
+    assert.strictEqual(fastHits, hits, "no further /fast requests once it 404s");
   } finally { server.close(); }
 });
 

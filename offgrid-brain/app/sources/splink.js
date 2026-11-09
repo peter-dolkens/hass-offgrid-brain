@@ -45,62 +45,114 @@ function parseBridge(doc, now = Date.now()) {
   return { soc, loadKw, batteryKw, pvKw, healthy: spOk };
 }
 
+/** The bridge's fast window (GET /fast): SoC and AC load, re-read every few
+    seconds so the brain can shed in time. taken_at is when the bridge read it. */
+function parseFast(doc, now = Date.now()) {
+  if (!doc || !doc.taken_at) return { soc: NONE, loadKw: NONE };
+  return {
+    soc: reading(doc.battery_soc_percent, doc.taken_at, now),
+    loadKw: reading(doc.ac_load_kilowatts, doc.taken_at, now),
+  };
+}
+
+const fresher = (a, b) => (a.ageSec <= b.ageSec ? a : b);
+
+/** Full document and fast window combined: each reading from whichever is newer. */
+function combine(doc, fastDoc, now = Date.now()) {
+  const full = parseBridge(doc, now);
+  const fast = parseFast(fastDoc, now);
+  return { ...full, soc: fresher(fast.soc, full.soc), loadKw: fresher(fast.loadKw, full.loadKw) };
+}
+
 class SplinkPoller {
-  constructor({ urls, pollSeconds, accessClientId, accessClientSecret, timeoutMs }) {
+  constructor({ urls, pollSeconds, fastSeconds, accessClientId, accessClientSecret, timeoutMs }) {
     this.urls = (urls || []).filter(Boolean);
-    this.pollSeconds = pollSeconds || 15;
+    this.pollSeconds = pollSeconds || 15;           // full document: PV, energy totals
+    this.fastSeconds = fastSeconds == null ? 3 : fastSeconds;   // /fast: SoC + load; 0 = off
     this.timeoutMs = timeoutMs || 8000;
     // Cloudflare Access service-token headers, for a tunnel behind Access.
     this.headers = accessClientId
       ? { "CF-Access-Client-Id": accessClientId, "CF-Access-Client-Secret": accessClientSecret || "" }
       : {};
     this.doc = null;
+    this.fastDoc = null;
+    this.fastSupported = true;
     this.source = null;   // which url answered last
-    this.timer = null;
+    this.failing = { full: false, fast: false };
+    this.timers = [];
   }
 
-  async fetchFrom(url) {
+  async fetchJson(url, isValid, what) {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), this.timeoutMs);
     try {
       const r = await fetch(url, { signal: ac.signal, headers: this.headers, redirect: "error" });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status });
       const doc = await r.json();
-      if (!doc || !doc.sp_pro) throw new Error("not a splink bridge document (no sp_pro)");
+      if (!isValid(doc)) throw new Error(`not a splink ${what}`);
       return doc;
     } finally { clearTimeout(t); }
   }
 
-  async pollOnce() {
+  /** Try each url in order; first answer wins. Logs only on failing/recovering
+      transitions, since the fast window polls every few seconds. */
+  async firstAnswer(kind, path, isValid) {
     const errors = [];
+    let notFound = 0;
     for (const url of this.urls) {
       try {
-        this.doc = await this.fetchFrom(url);
-        if (this.source !== url) log.info(`splink: reading from ${url}`);
-        this.source = url;
-        return true;
+        const doc = await this.fetchJson(new URL(path, url).href, isValid, kind);
+        if (this.failing[kind]) log.info(`splink: ${kind} reads recovered (${url})`);
+        this.failing[kind] = false;
+        return { doc, url };
       } catch (e) {
+        if (e.status === 404) notFound++;
         errors.push(`${url}: ${e.name === "AbortError" ? "timeout" : e.message}`);
       }
     }
-    // Keep the last document: its readings age out into safe mode on their own.
-    log.warn(`splink: no bridge answered (${errors.join("; ")})`);
-    this.source = null;
+    if (!this.failing[kind]) log.warn(`splink: no bridge answered the ${kind} read (${errors.join("; ")})`);
+    this.failing[kind] = true;
+    return { notFound: notFound === this.urls.length };
+  }
+
+  async pollOnce() {
+    const r = await this.firstAnswer("full", "", (d) => d && d.sp_pro);
+    // On failure keep the last document: its readings age out into safe mode on their own.
+    if (!r.doc) { this.source = null; return false; }
+    if (this.source !== r.url) log.info(`splink: reading from ${r.url}`);
+    this.source = r.url;
+    this.doc = r.doc;
+    return true;
+  }
+
+  async pollFast() {
+    if (!this.fastSupported) return false;
+    const r = await this.firstAnswer("fast", "fast", (d) => d && d.taken_at && "battery_soc_percent" in d);
+    if (r.doc) { this.fastDoc = r.doc; return true; }
+    if (r.notFound) {
+      this.fastSupported = false;
+      log.info("splink: bridge has no /fast window; using the full document only");
+    }
     return false;
   }
 
   /** { soc, loadKw, batteryKw, pvKw } each as { value, ageSec }. */
-  get readings() { return parseBridge(this.doc); }
+  get readings() { return combine(this.doc, this.fastDoc); }
 
   start() {
     if (!this.urls.length) return;
-    log.info(`splink bridge polling enabled: ${this.urls.join(" -> ")} every ${this.pollSeconds}s`);
-    const tick = () => this.pollOnce().catch((e) => log.warn("splink poll error", e.message));
-    tick();
-    this.timer = setInterval(tick, this.pollSeconds * 1000);
+    log.info(`splink bridge polling enabled: ${this.urls.join(" -> ")}, full every ${this.pollSeconds}s` +
+             (this.fastSeconds ? `, fast window every ${this.fastSeconds}s` : ""));
+    const every = (fn, sec) => {
+      const run = () => fn().catch((e) => log.warn("splink poll error", e.message));
+      run();
+      this.timers.push(setInterval(run, sec * 1000));
+    };
+    every(() => this.pollOnce(), this.pollSeconds);
+    if (this.fastSeconds) every(() => this.pollFast(), this.fastSeconds);
   }
 
-  stop() { if (this.timer) clearInterval(this.timer); }
+  stop() { for (const t of this.timers) clearInterval(t); this.timers = []; }
 }
 
-module.exports = { SplinkPoller, parseBridge };
+module.exports = { SplinkPoller, parseBridge, parseFast, combine };
