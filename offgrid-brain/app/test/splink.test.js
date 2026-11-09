@@ -169,10 +169,8 @@ t("poller reads /fast and stops asking a bridge that has none", async () => {
   } finally { server.close(); }
 });
 
-t("energy counters: Fronius lifetime totals summed, SP PRO daily counters as-is", () => {
+t("energy counters: SP PRO daily counters as-is", () => {
   const r = parseBridge(fixture, Date.parse(fixture.sp_pro.today_read_at) + 60_000);
-  const sum = fixture.fronius.reduce((a, i) => a + i.energy.total_wh, 0) / 1000;
-  assert.strictEqual(r.energy.solarKwh.value, sum);
   assert.strictEqual(r.energy.batteryInKwh.value, fixture.sp_pro.today.battery_in_kwh);
   assert.strictEqual(r.energy.batteryOutKwh.value, fixture.sp_pro.today.battery_out_kwh);
   assert.strictEqual(r.energy.loadKwh.value, fixture.sp_pro.today.ac_load_kwh);
@@ -180,9 +178,20 @@ t("energy counters: Fronius lifetime totals summed, SP PRO daily counters as-is"
   assert.strictEqual(r.energy.loadKwh.ageSec, 60);
 });
 
-t("no solar energy total unless every inverter is healthy", () => {
+t("each inverter separately: key and name from the bridge, power and lifetime energy", () => {
+  const r = parseBridge(fixture, readAt);
+  assert.deepStrictEqual(r.inverters.map((i) => i.key), fixture.fronius.map((i) => i.name));
+  assert.strictEqual(r.inverters[0].name, fixture.fronius[0].custom_name);
+  assert.strictEqual(r.inverters[0].energyKwh.value, fixture.fronius[0].energy.total_wh / 1000);
+  assert.strictEqual(r.inverters[1].powerKw.value, fixture.fronius[1].ac.power_watts / 1000);
+});
+
+t("one unhealthy inverter doesn't hide the other", () => {
   const d = clone(); d.fronius[0].healthy = false;
-  assert.ok(Number.isNaN(parseBridge(d).energy.solarKwh.value));
+  const r = parseBridge(d, readAt);
+  assert.ok(Number.isNaN(r.inverters[0].energyKwh.value));
+  assert.strictEqual(r.inverters[1].energyKwh.value, d.fronius[1].energy.total_wh / 1000);
+  assert.ok(Number.isNaN(r.pvKw.value), "the combined PV the brain decides on still needs both");
 });
 
 Promise.all(results).then(() => console.log(`\n${pass} passed`));

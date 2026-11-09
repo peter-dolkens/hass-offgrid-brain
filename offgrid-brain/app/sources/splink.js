@@ -36,30 +36,39 @@ function parseBridge(doc, now = Date.now()) {
 
   // PV is only trustworthy when every inverter reported; a partial sum would
   // under-read solar. Age is the OLDEST inverter reading.
-  let pvKw = NONE, solarKwh = NONE;
+  let pvKw = NONE;
   const inv = Array.isArray(doc && doc.fronius) ? doc.fronius : [];
-  const invOk = inv.length && inv.every((i) => i.healthy);
-  const oldest = invOk ? inv.map((i) => i.taken_at).sort((a, b) => Date.parse(a) - Date.parse(b))[0] : null;
-  if (invOk && inv.every((i) => i.ac && Number.isFinite(i.ac.power_watts))) {
+  if (inv.length && inv.every((i) => i.healthy && i.ac && Number.isFinite(i.ac.power_watts))) {
+    const oldest = inv.map((i) => i.taken_at).sort((a, b) => Date.parse(a) - Date.parse(b))[0];
     pvKw = reading(inv.reduce((s, i) => s + i.ac.power_watts, 0) / 1000, oldest, now);
   }
-  // Lifetime counters: monotonic, so the Energy dashboard can use them directly.
-  if (invOk && inv.every((i) => i.energy && Number.isFinite(i.energy.total_wh))) {
-    solarKwh = reading(inv.reduce((s, i) => s + i.energy.total_wh, 0) / 1000, oldest, now);
-  }
+
+  // Each inverter on its own, for the Energy dashboard: one array going quiet
+  // shows up as a gap against the other rather than vanishing into a total.
+  // The lifetime counter is monotonic, so the dashboard can use it directly.
+  const inverters = inv.map((i, n) => ({
+    key: slug(i.name || i.host || `inverter_${n + 1}`),
+    name: i.custom_name || i.name || `Inverter ${n + 1}`,
+    powerKw: i.healthy && i.ac ? reading(i.ac.power_watts / 1000, i.taken_at, now) : NONE,
+    energyKwh: i.healthy && i.energy ? reading(i.energy.total_wh / 1000, i.taken_at, now) : NONE,
+  }));
 
   // The SP PRO only exposes TODAY's energy, reset at its own midnight. That still
   // works as total_increasing: HA treats the drop to zero as a new cycle.
   const today = (spOk && sp.today) || {};
   const day = (v) => (spOk ? reading(v, sp.today_read_at, now) : NONE);
   const energy = {
-    solarKwh,
     batteryInKwh: day(today.battery_in_kwh),
     batteryOutKwh: day(today.battery_out_kwh),
     loadKwh: day(today.ac_load_kwh),
     generatorKwh: day(today.ac_input_kwh),
   };
-  return { soc, loadKw, batteryKw, pvKw, energy, healthy: spOk };
+  return { soc, loadKw, batteryKw, pvKw, inverters, energy, healthy: spOk };
+}
+
+/** Entity-safe key from an inverter name ("Right" -> "right"). */
+function slug(s) {
+  return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "inverter";
 }
 
 /** The bridge's fast window (GET /fast): SoC and AC load, re-read every few

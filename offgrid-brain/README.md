@@ -153,12 +153,15 @@ With `splink` it also publishes the counters the **Energy dashboard** needs:
 
 | Energy dashboard | Entity | Source |
 |---|---|---|
-| Solar production | `sensor.offgrid_brain_solar_energy` | Fronius lifetime counters, summed |
+| Solar production, one per inverter | `sensor.offgrid_brain_solar_<name>_energy` (+ `_power`) | each Fronius lifetime counter |
 | Battery: energy going in | `sensor.offgrid_brain_battery_in_energy` | SP PRO, today |
 | Battery: energy coming out | `sensor.offgrid_brain_battery_out_energy` | SP PRO, today |
 | Battery power | `sensor.offgrid_brain_battery_power` | SP PRO; positive = discharging |
 | Grid consumption (generator) | `sensor.offgrid_brain_generator_energy` | SP PRO AC input, today |
 | Individual device | `sensor.offgrid_brain_load_energy` | SP PRO AC load, today |
+
+Each inverter is published on its own, keyed by the bridge's inverter name (e.g.
+`solar_right_energy`), so one array going quiet shows up against the other.
 
 The SP PRO only exposes daily counters, reset at its own midnight. They are
 `total_increasing`, so Home Assistant treats the reset as a new cycle. A counter

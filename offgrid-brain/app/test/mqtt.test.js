@@ -23,17 +23,30 @@ const tick = (inputs) => ({
 t("energy counters are announced for the Energy dashboard", () => {
   const { sink, sent } = capture();
   sink.publishTick(tick({ batteryKw: fresh(-0.4), energy: {
-    solarKwh: fresh(202.5413), batteryInKwh: fresh(1.354), batteryOutKwh: fresh(0.738),
-    loadKwh: fresh(0.569), generatorKwh: fresh(0),
+    batteryInKwh: fresh(1.354), batteryOutKwh: fresh(0.738), loadKwh: fresh(0.569), generatorKwh: fresh(0),
   } }));
-  for (const key of ["solar_energy", "battery_in_energy", "battery_out_energy", "load_energy", "generator_energy"]) {
+  for (const key of ["battery_in_energy", "battery_out_energy", "load_energy", "generator_energy"]) {
     const cfg = JSON.parse(sent[`homeassistant/sensor/offgrid_brain/${key}/config`]);
     assert.strictEqual(cfg.device_class, "energy", key);
     assert.strictEqual(cfg.state_class, "total_increasing", key);
     assert.strictEqual(cfg.unit_of_measurement, "kWh", key);
   }
-  assert.strictEqual(sent["offgrid_brain/solar_energy"], "202.541");
   assert.strictEqual(sent["offgrid_brain/battery_in_energy"], "1.354");
+});
+
+t("each solar inverter gets its own power and energy entities", () => {
+  const { sink, sent } = capture();
+  sink.publishTick(tick({ inverters: [
+    { key: "right", name: "Solar Inverter (Right)", powerKw: fresh(1.5), energyKwh: fresh(102.4258) },
+    { key: "left", name: "Solar Inverter (Left)", powerKw: fresh(0.75), energyKwh: { value: NaN, ageSec: Infinity } },
+  ] }));
+  assert.strictEqual(sent["offgrid_brain/solar_right_power"], "1500");
+  assert.strictEqual(sent["offgrid_brain/solar_right_energy"], "102.426");
+  assert.strictEqual(sent["offgrid_brain/solar_left_power"], "750");
+  assert.ok(!("offgrid_brain/solar_left_energy" in sent), "no counter, no energy entity update");
+  const cfg = JSON.parse(sent["homeassistant/sensor/offgrid_brain/solar_right_energy/config"]);
+  assert.strictEqual(cfg.name, "Solar Inverter (Right) energy");
+  assert.strictEqual(cfg.state_class, "total_increasing");
 });
 
 t("battery power is published in W, negative while charging", () => {
@@ -46,15 +59,15 @@ t("battery power is published in W, negative while charging", () => {
 
 t("stale or missing counters are not published (the retained value stands)", () => {
   const { sink, sent } = capture();
-  sink.publishTick(tick({ energy: { solarKwh: { value: 10, ageSec: 5000 }, loadKwh: { value: NaN, ageSec: Infinity } } }));
-  assert.ok(!("offgrid_brain/solar_energy" in sent));
+  sink.publishTick(tick({ energy: { batteryInKwh: { value: 10, ageSec: 5000 }, loadKwh: { value: NaN, ageSec: Infinity } } }));
+  assert.ok(!("offgrid_brain/battery_in_energy" in sent));
   assert.ok(!("offgrid_brain/load_energy" in sent));
 });
 
 t("without a bridge (HA-entity sources) nothing energy-related is announced", () => {
   const { sink, sent } = capture();
   sink.publishTick(tick({ batteryKw: null, energy: null }));
-  assert.ok(!Object.keys(sent).some((k) => /energy|battery_power/.test(k)));
+  assert.ok(!Object.keys(sent).some((k) => /energy|battery_power|solar_/.test(k)));
 });
 
 console.log(`\n${pass} passed`);

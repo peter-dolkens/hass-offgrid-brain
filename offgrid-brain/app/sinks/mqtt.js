@@ -23,6 +23,10 @@ const DEVICE = {
 };
 const STATUS = "offgrid_brain/status";
 
+/* Entities from earlier versions, removed from HA on connect by publishing an
+   empty retained discovery config. 0.6.0 published one combined solar total. */
+const RETIRED = ["sensor/solar_energy"];
+
 /** Broker from explicit options, else the Supervisor's MQTT service (the
     Mosquitto add-on's own credentials). Returns null when neither is available. */
 async function resolveBroker(opt, supervisorToken) {
@@ -49,7 +53,6 @@ const ENERGY_STALE_SEC = 900;
 
 /* Energy dashboard inputs: key -> [name, field in inputs.energy, icon]. */
 const ENERGY = {
-  solar_energy: ["Solar energy", "solarKwh", "mdi:solar-power-variant"],
   battery_in_energy: ["Battery charged", "batteryInKwh", "mdi:battery-arrow-down"],
   battery_out_energy: ["Battery discharged", "batteryOutKwh", "mdi:battery-arrow-up"],
   load_energy: ["Load energy", "loadKwh", "mdi:home-lightning-bolt"],
@@ -85,6 +88,11 @@ class MqttSink {
       log.info("MQTT connected");
       this.announced.clear();   // re-announce after a reconnect (the broker may have restarted)
       this.client.publish(STATUS, "online", { retain: true });
+      for (const id of RETIRED) {
+        const [component, key] = id.split("/");
+        this.client.publish(`${this.prefix}/${component}/offgrid_brain/${key}/config`, "", { retain: true });
+        this.client.publish(`offgrid_brain/${key}`, "", { retain: true });
+      }
     });
     this.client.on("error", (e) => log.warn("MQTT error", e.message));
   }
@@ -125,6 +133,18 @@ class MqttSink {
       const b = inputs.batteryKw;
       this.publish("sensor", "battery_power", num(b.ageSec < ENERGY_STALE_SEC ? b.value * 1000 : NaN, 0),
         { name: "Battery power", ...power, icon: "mdi:home-battery" });
+    }
+    // Each solar inverter separately: power, and its lifetime energy counter.
+    for (const inv of inputs.inverters || []) {
+      this.publish("sensor", `solar_${inv.key}_power`,
+        num(inv.powerKw.ageSec < ENERGY_STALE_SEC ? inv.powerKw.value * 1000 : NaN, 0),
+        { name: `${inv.name} power`, ...power, icon: "mdi:solar-power-variant" });
+      if (Number.isFinite(inv.energyKwh.value) && inv.energyKwh.ageSec < ENERGY_STALE_SEC) {
+        this.publish("sensor", `solar_${inv.key}_energy`, inv.energyKwh.value.toFixed(3), {
+          name: `${inv.name} energy`, unit_of_measurement: "kWh", device_class: "energy",
+          state_class: "total_increasing", suggested_display_precision: 2, icon: "mdi:solar-power-variant",
+        });
+      }
     }
     for (const [key, [name, field, icon]] of Object.entries(ENERGY)) {
       const r = inputs.energy && inputs.energy[field];
