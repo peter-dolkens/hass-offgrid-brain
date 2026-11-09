@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.4
+- Live: the timeline tooltip no longer sticks after scrolling. It hides as soon as
+  the page scrolls, and whenever the pointer moves anywhere off the chart.
+
 ## 0.21.3
 - Live: once folded, the timeline's control pill floats over the compact chart's
   top-left corner. The controls bar's height goes to zero with the scroll and the

@@ -789,6 +789,8 @@ for (const c of CHARTS) {
   el.addEventListener("pointerup", () => { dragging = false; });
   el.addEventListener("pointerleave", () => { if (tip) tip.hidden = true; });
 }
+// Belt and braces: any pointer movement that isn't over the chart hides the tooltip.
+document.addEventListener("pointermove", (ev) => { if (tip && !tip.hidden && !ev.target.closest("#tl-chart")) tip.hidden = true; }, { passive: true });
 
 // replay: from the start of the record (or where it's paused) at the chosen speed until it reaches now
 let lastFrame = 0;
@@ -841,6 +843,7 @@ for (const el of document.querySelectorAll(".js-now")) el.addEventListener("clic
    to 1 (compact), drives all of it, so scrolling back reverses it exactly. */
 let pinRaf = 0, footH = null;
 function placeMini() {
+  if (tip) tip.hidden = true;   // the chart moves under a still pointer, so no pointerleave fires
   if (!pinRaf) pinRaf = requestAnimationFrame(() => { pinRaf = 0; updatePin(); });
 }
 function unpin(card) {
