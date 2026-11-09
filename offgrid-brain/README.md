@@ -35,7 +35,8 @@ The add-on adds **Off-Grid Brain** to the Home Assistant sidebar (Ingress, admin
   sit at the reserve are tinted. Click or drag the timeline to look at any
   moment, or press **Replay** to play the last day at 60×, 600× or 900× until it
   catches up to now. Scroll down and the timeline follows as a compact scrubber
-  pinned under the header, with the same controls.
+  pinned under the header, with the same controls; it shrinks with the scroll as
+  the full chart slides away.
   Under it are three panels for the moment being viewed:
   - **Battery:** a ring with each charge rung's floor and the reserve, the
     charge/discharge rate as an inner arc, and when it reaches full or the next floor.
@@ -226,6 +227,21 @@ the dispatch list and the simulator use):
 
 A device with no `switch` is **advisory only**: the brain reasons about its power
 but never actuates it. Use that for anything not yet wired.
+
+**Important or convenience.** Every load is *important* unless you untick
+**Important** in the Loads table (`"important": false` in policy.json). A dispatch
+entry can override its load either way with its own `"important"`. When a load
+ends up not running:
+
+- if any of its entries that went unserved was important, it is **shed**. It shows
+  red in the Loads panel, marks the timeline's strip, and counts in the MQTT
+  `shed_count`;
+- otherwise it is **held back**. An EV waiting for surplus, or a comfort setpoint
+  the battery can't afford, shows grey and counts in `held_back_count`.
+
+For example, an office whose frost/heat protection entry (`gap > 10`) is
+important but whose comfort and soak entries are not is only flagged when the
+protection can't run.
 
 ### `battery`
 

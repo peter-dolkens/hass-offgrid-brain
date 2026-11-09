@@ -152,7 +152,7 @@ async function main() {
   function timeline() {
     const now = Date.now();
     const past = recorder.since(now - 24 * 3600 * 1000);
-    const devices = policy.devices.map((d) => ({ id: d.id, name: d.name || d.id, kw: d.kw }));
+    const devices = policy.devices.map((d) => ({ id: d.id, name: d.name || d.id, kw: d.kw, important: d.important !== false }));
     const floors = [...new Set(policy.list.filter((e) => e.type === "charge" && e.to < 100).map((e) => e.to))].sort((a, b) => a - b);
     const base = { now, from: now - 24 * 3600 * 1000, to: now + 24 * 3600 * 1000, battery: settings.battery, floors, devices, past };
     if (!lastTick) return { ...base, future: [] };
@@ -334,7 +334,8 @@ async function main() {
     const battKw = batt.batteryKw.ageSec < STALE_SEC ? batt.batteryKw.value : NaN;
     recorder.add(now.getTime(), {
       soc: socUsable ? socEnt.value : NaN, loadKw, pvKw: pvDelivered, availKw: pvAvailable, battKw,
-      run: result.decisions.filter((d) => d.run).map((d) => d.id), shed: result.shed.map((d) => d.id), floorPct: result.floorPct,
+      run: result.decisions.filter((d) => d.run).map((d) => d.id), shed: result.shed.map((d) => d.id),
+      flagged: result.flagged.map((d) => d.id), floorPct: result.floorPct,
     });
     if (now - timelineSavedAt >= TIMELINE_SAVE_MS) { recorder.save(TIMELINE_PATH); timelineSavedAt = now.getTime(); }
     snapshot = {
@@ -348,7 +349,7 @@ async function main() {
       },
       ctx,
       result: summarise(result),
-      devices: policy.devices.map((d) => ({ id: d.id, name: d.name, switch: d.switch || null })),
+      devices: policy.devices.map((d) => ({ id: d.id, name: d.name, switch: d.switch || null, important: d.important !== false })),
     };
 
     lastTick = {

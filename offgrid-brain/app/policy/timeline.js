@@ -53,11 +53,12 @@ class Recorder {
     }
     this.cur.run = s.run || [];
     this.cur.shed = s.shed || [];
+    this.cur.flagged = s.flagged || [];
     this.cur.floorPct = s.floorPct;
   }
 
   _close() {
-    const c = this.cur, out = { t: c.t, run: c.run, shed: c.shed, floorPct: c.floorPct };
+    const c = this.cur, out = { t: c.t, run: c.run, shed: c.shed, flagged: c.flagged, floorPct: c.floorPct };
     for (const k of NUMS) out[k] = c.n[k] ? +(c.sum[k] / c.n[k]).toFixed(4) : null;
     this.samples.push(out);
     this.cur = null;
@@ -68,7 +69,7 @@ class Recorder {
   /** Finished minutes plus the one in progress. */
   all() {
     if (!this.cur) return this.samples.slice();
-    const c = this.cur, open = { t: c.t, run: c.run, shed: c.shed, floorPct: c.floorPct };
+    const c = this.cur, open = { t: c.t, run: c.run, shed: c.shed, flagged: c.flagged, floorPct: c.floorPct };
     for (const k of NUMS) open[k] = c.n[k] ? +(c.sum[k] / c.n[k]).toFixed(4) : null;
     return [...this.samples, open];
   }
@@ -157,7 +158,7 @@ function project({ now, soc, ctx, policy, limits, battery, forecast, load, auton
     const battKw = used - loadKw - overheadKw;
     out.push({
       t, soc: +s.toFixed(2), loadKw: +loadKw.toFixed(4), pvKw: +used.toFixed(4), availKw: known ? +pv.toFixed(4) : null, battKw: +battKw.toFixed(4) || 0,
-      run: r.decisions.filter((x) => x.run).map((x) => x.id), shed: r.shed.map((x) => x.id), floorPct: r.floorPct,
+      run: r.decisions.filter((x) => x.run).map((x) => x.id), shed: r.shed.map((x) => x.id), flagged: r.flagged.map((x) => x.id), floorPct: r.floorPct,
       deficit: s <= reserve + 0.01 && battKw < -0.01, forecast: known,
     });
     s = Math.max(reserve, Math.min(100, s + ((battKw * stepH) / cap) * 100));

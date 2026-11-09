@@ -181,10 +181,15 @@ class MqttSink {
         suggested_display_precision: 0, icon: "mdi:battery-clock" });
     this.publish("sensor", "floor", result.floorPct,
       { name: "Deepest floor", unit_of_measurement: "%", icon: "mdi:format-vertical-align-bottom" });
-    this.publish("sensor", "shed_count", result.shed.length,
+    // "Shed" means an important load couldn't run; convenience loads waiting for
+    // surplus are "held back" and counted separately.
+    const flagged = result.flagged || result.shed, held = result.heldBack || [];
+    this.publish("sensor", "shed_count", flagged.length,
       { name: "Loads shed", state_class: "measurement", icon: "mdi:flash-off" });
-    this.publish("sensor", "shed_detail", JSON.stringify(result.shed.map((s) => s.id)).slice(0, 255),
+    this.publish("sensor", "shed_detail", JSON.stringify(flagged.map((s) => s.id)).slice(0, 255),
       { name: "Shed loads", icon: "mdi:format-list-bulleted" });
+    this.publish("sensor", "held_back_count", held.length,
+      { name: "Loads held back", state_class: "measurement", icon: "mdi:timer-sand-paused" });
     if (solar) this.publishSolar(solar, power);
     this.publish("binary_sensor", "safe_mode", safeMode ? "ON" : "OFF", { name: "Safe mode", device_class: "problem" });
     this.publish("binary_sensor", "dry_run", dryRun ? "ON" : "OFF", { name: "Dry run", icon: "mdi:test-tube" });

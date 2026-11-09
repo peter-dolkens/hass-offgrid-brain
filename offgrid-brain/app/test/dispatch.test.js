@@ -164,4 +164,31 @@ t("a charge rung below target with no solar left says so, not charging", () => {
   assert.strictEqual(charge(0, 100), "full");
 });
 
+t("only important sheds are flagged; convenience loads are held back", () => {
+  const pol = {
+    devices: [{ id: "office", kw: 1.4 }, { id: "ev", kw: 6.6, important: false }, { id: "pump", kw: 0.5 }],
+    list: [
+      { type: "charge", to: 80 },
+      { type: "load", dev: "office", cond: "1", important: false },   // comfort: not worth flagging
+      { type: "load", dev: "ev", cond: "1" },
+      { type: "load", dev: "pump", cond: "1" },
+    ],
+  };
+  const r = decide(pol, ctx({ pv: 0, soc: 50 }), LIMITS);
+  assert.deepStrictEqual(r.shed.map((d) => d.id).sort(), ["ev", "office", "pump"]);
+  assert.deepStrictEqual(r.flagged.map((d) => d.id), ["pump"]);
+  assert.deepStrictEqual(r.heldBack.map((d) => d.id).sort(), ["ev", "office"]);
+  assert.strictEqual(r.trace[1].important, false);
+  assert.strictEqual(r.trace[3].important, true);
+});
+
+t("an important entry going unserved flags the device; a convenience entry alone doesn't", () => {
+  const pol = {
+    devices: [{ id: "office", kw: 1.4, important: false }],
+    list: [{ type: "charge", to: 80 }, { type: "load", dev: "office", cond: "gap > 0 ? 1 : 0", important: true }, { type: "load", dev: "office", cond: "1" }],
+  };
+  assert.deepStrictEqual(decide(pol, ctx({ pv: 0, soc: 50, gap: 0 }), LIMITS).flagged.length, 0, "only the convenience entry asked");
+  assert.deepStrictEqual(decide(pol, ctx({ pv: 0, soc: 50, gap: 12 }), LIMITS).flagged.map((d) => d.id), ["office"]);
+});
+
 console.log(`\n${pass} passed`);

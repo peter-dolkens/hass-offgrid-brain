@@ -91,6 +91,7 @@
   .chip { font-size: 12px; font-weight: 650; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
   .chip.granted, .chip.full { background: var(--good-bg); color: var(--good); }
   .chip.shed { background: var(--bad-bg); color: var(--bad); }
+  .chip.held { background: var(--idle-bg); color: var(--muted); }
   .chip.deficit, .chip.partial { background: var(--warn-bg); color: var(--warn); }
   .chip.idle, .chip.already-served, .chip.unknown-device, .chip.ignored { background: var(--idle-bg); color: var(--idle); }
   .chip.charging { background: var(--charge-bg); color: var(--charge); }
@@ -189,7 +190,7 @@
         <span><i style="background:var(--batt)"></i>battery %</span><span><i style="background:var(--floor)"></i>floors</span>
         <span><i style="background:var(--reserve)"></i>reserve</span><span><i style="background:var(--pv)"></i>solar used</span>
         <span><i style="background:var(--solar-av)"></i>solar available</span><span><i style="background:var(--load)"></i>load</span>
-        <span><i style="background:var(--bad)"></i>loads shed</span><span>dashed = projected</span>
+        <span><i style="background:var(--bad)"></i>important loads shed</span><span>dashed = projected</span>
       </div>
     </div>
     <div class="gauges">
@@ -267,7 +268,7 @@
     <div class="card">
       <h2>Loads <span class="muted">What the brain may switch. Stored in policy.json with the dispatch list; a load with no switch is advisory only.</span></h2>
       <div style="overflow-x:auto"><table class="devtable"><thead><tr>
-        <th>Id</th><th>Name</th><th>kW</th><th>Switch</th><th>Power sensor</th><th>Min dwell (s)</th><th></th>
+        <th>Id</th><th>Name</th><th>kW</th><th>Switch</th><th>Power sensor</th><th>Min dwell (s)</th><th title="Flag it when this load is shed. Untick for convenience loads such as an EV charger.">Important</th><th></th>
       </tr></thead><tbody id="devrows"></tbody></table></div>
       <div class="actions">
         <button class="btn" id="btn-dev-add">Add load</button>
@@ -311,7 +312,7 @@ function why(t) {
     case "already-served": return "An earlier entry already gave it this much.";
     case "granted": return `Granted ${watts(t.incKw)}: ${watts(t.fromPvKw)} solar + ${watts(t.fromBattKw)} battery.`;
     case "partial": return `This deeper service level wasn't reached (short ${watts(t.shortKw)}); it runs at a lower level.`;
-    case "shed": return `Short ${watts(t.shortKw)}. The battery can't go below this entry's ${t.floorPct}% floor.`;
+    case "shed": return `Short ${watts(t.shortKw)}. The battery can't go below this entry's ${t.floorPct}% floor.${t.important ? "" : " Not marked important, so it's held back rather than flagged."}`;
     case "deficit": return `Short ${watts(t.shortKw)}, but it can't be shed (gen-backed), so it keeps running.`;
     case "unknown-device": return "This entry names a device that isn't in the policy.";
     default: return "";
@@ -334,7 +335,7 @@ function renderRow(t) {
     <div><div class="name">${esc(t.name || t.dev)}${level}${t.gen ? '<span class="chip gen">can\'t shed</span>' : ""}</div>
       ${t.cond != null && t.cond !== "1" ? `<div class="cond">${esc(t.cond)}</div>` : ""}
       <div class="why">${esc(why(t))}</div>${bar}</div>
-    <div><span class="chip ${t.outcome}">${OUTCOME[t.outcome] || t.outcome}</span></div></div>`;
+    <div>${t.outcome === "shed" && !t.important ? '<span class="chip held">held back</span>' : `<span class="chip ${t.outcome}">${OUTCOME[t.outcome] || t.outcome}</span>`}</div></div>`;
 }
 
 let showIdle = false, showServed = false;
@@ -415,7 +416,8 @@ function liveMoment() {
     t: Date.parse(s.time), soc: v(i.soc), battKw: v(i.batteryKw), loadKw: v(i.loadKw),
     pvKw: Number.isFinite(sol.deliveredKw) ? sol.deliveredKw : v(i.pvKw), availKw: n(sol.availableKw),
     run: s.result.decisions.filter((d) => d.run).map((d) => d.id),
-    shed: s.result.decisions.filter((d) => !d.run).map((d) => d.id), floorPct: s.result.floorPct,
+    shed: s.result.decisions.filter((d) => !d.run && d.flagged).map((d) => d.id),
+    held: s.result.decisions.filter((d) => !d.run && !d.flagged).map((d) => d.id), floorPct: s.result.floorPct,
   };
 }
 /** The recorded or projected sample nearest a moment. */
@@ -425,7 +427,9 @@ function momentAt(t) {
   if (!list.length) return liveMoment();
   let best = list[0];
   for (const x of list) if (Math.abs(x.t - t) < Math.abs(best.t - t)) best = x;
-  return { ...best, t, projected: t > tl.now,
+  // Samples from before 0.20 have no `flagged`: every shed counted then.
+  const flagged = best.flagged || best.shed || [];
+  return { ...best, t, projected: t > tl.now, shed: flagged, held: (best.shed || []).filter((id) => !flagged.includes(id)),
     soc: n(best.soc), battKw: n(best.battKw), loadKw: n(best.loadKw), pvKw: n(best.pvKw), availKw: n(best.availKw) };
 }
 const floorsOf = () => [state.battery.reserve_pct, ...((tl && tl.floors) || []).filter((f) => f > state.battery.reserve_pct)];
@@ -555,14 +559,15 @@ function loadGauge(m) {
 
 function loadsPanel(m) {
   const devs = (tl && tl.devices) || state.devices || [];
-  const run = new Set(m.run || []), shed = new Set(m.shed || []);
-  const rank = (d) => (shed.has(d.id) ? 0 : run.has(d.id) ? 1 : 2);
+  const run = new Set(m.run || []), shed = new Set(m.shed || []), held = new Set(m.held || []);
+  const rank = (d) => (shed.has(d.id) ? 0 : run.has(d.id) ? 1 : held.has(d.id) ? 2 : 3);
   const rows = devs.slice().sort((a, z) => rank(a) - rank(z)).map((d) => {
-    const st = shed.has(d.id) ? ["shed", "shed"] : run.has(d.id) ? ["granted", "running"] : ["idle", "not needed"];
+    const st = shed.has(d.id) ? ["shed", "shed"] : run.has(d.id) ? ["granted", "running"] : held.has(d.id) ? ["held", "held back"] : ["idle", "not needed"];
     return `<div class="ld"><span>${esc(d.name || d.id)}</span><span class="chip ${st[0]}">${st[1]}</span></div>`;
   }).join("");
   return `<div class="counts"><span class="chip granted">${run.size} running</span><span class="chip ${shed.size ? "shed" : "idle"}">${shed.size} shed</span>
-      <span class="chip idle">${Math.max(0, devs.length - run.size - shed.size)} not needed</span></div>
+      ${held.size ? `<span class="chip held">${held.size} held back</span>` : ""}
+      <span class="chip idle">${Math.max(0, devs.length - run.size - shed.size - held.size)} not needed</span></div>
     <div class="loads">${rows || '<div class="muted">No loads in the policy.</div>'}</div>`;
 }
 
@@ -599,7 +604,7 @@ function segments(list, key, maxGap) {
 }
 const MINI_H = 64;
 function drawTimeline() {
-  for (const c of CHARTS) if (!c.compact || (!$("tl-mini").hidden && !miniAnim)) drawChart(c);
+  for (const c of CHARTS) if (!c.compact || !$("tl-mini").hidden) drawChart(c, c.h);
 }
 /* The compact chart scales its bands with its height, so the shrink animation can
    redraw it at any height between the full chart's and MINI_H. */
@@ -609,7 +614,8 @@ function drawChart(c, height) {
   const W = Math.max(300, el.clientWidth - (cp ? 0 : 16)), H = cp ? height || MINI_H : W < 560 ? 220 : 250;
   if (!cp) c.fullH = H;
   // One plot: battery % on the left axis and kW on the right, over the same height.
-  const M = cp ? { l: 4, r: 4, t: 3 } : { l: 40, r: 40, t: 14 };
+  // Both charts share the side margins, so time lines up as one morphs into the other.
+  const M = cp ? { l: 40, r: 40, t: 6 } : { l: 40, r: 40, t: 14 };
   const top = M.t, bot = cp ? H * 0.8 : H - 34;
   const shedY = cp ? H * 0.84 : H - 28, axisY = cp ? H - 1 : H - 6, shedH = cp ? Math.max(3, Math.min(6, H * 0.03)) : 6;
   const x = (t) => M.l + ((t - tl.from) / (tl.to - tl.from)) * (W - M.l - M.r);
@@ -624,8 +630,14 @@ function drawChart(c, height) {
   const line = (segs, y) => segs.map((s) => `M${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}`).join("");
   const area = (segs, y) => segs.map((s) => `M${x(s[0][0]).toFixed(1)},${bot}L${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}L${x(s[s.length - 1][0]).toFixed(1)},${bot}Z`).join("");
   const parts = [];
-  // grid: three lines shared by both axes (the compact chart keeps only the floors and the hours)
-  if (!cp) {
+  // grid: three lines shared by both axes; the compact chart labels just the ends of each axis
+  if (cp) {
+    for (const q of [0, 1]) {
+      const y = top + (1 - q) * (bot - top);
+      parts.push(txt(M.l - 5, y + 3, `${q * 100}%`, { a: "end", size: 9, fill: "var(--muted)", mono: true })
+        + txt(W - M.r + 5, y + 3, q ? `${+kwMax.toFixed(2)} kW` : "0", { a: "start", size: 9, fill: "var(--muted)", mono: true }));
+    }
+  } else {
     for (const q of [0, 0.5, 1]) {
       const y = top + (1 - q) * (bot - top);
       parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${y}" y2="${y}" stroke="var(--line)"/>`
@@ -656,7 +668,8 @@ function drawChart(c, height) {
     parts.push(`<path d="${line(segments(list, "soc", gap), ys)}" fill="none" stroke="var(--batt)" stroke-width="${cp ? 2 : 2.5}" stroke-linejoin="round"${dash}/>`);
     for (let k = 0; k < list.length; k++) {
       const p = list[k];
-      if (!p.shed || !p.shed.length) continue;
+      const flagged = p.flagged || p.shed;   // only important loads mark the strip
+      if (!flagged || !flagged.length) continue;
       const t1 = k + 1 < list.length ? Math.min(list[k + 1].t, p.t + gap) : p.t + gap / 2;
       parts.push(`<rect x="${x(p.t)}" y="${shedY}" width="${Math.max(1, x(t1) - x(p.t))}" height="${shedH}" fill="var(--bad)"${op}/>`);
       if (p.deficit) parts.push(`<rect x="${x(p.t)}" y="${top}" width="${Math.max(1, x(t1) - x(p.t))}" height="${bot - top}" fill="var(--bad)" opacity=".08"/>`);
@@ -692,7 +705,7 @@ function showTip(ev, t) {
   if (!tip) { tip = document.createElement("div"); tip.className = "tip"; document.body.appendChild(tip); }
   const m = momentAt(t);
   if (!m) return;
-  tip.innerHTML = `${t > tl.now ? "projected " : ""}${dayClock(t)}<br>battery ${fmt(m.soc, 0)}% · load ${kw(m.loadKw)}<br>solar ${kw(m.pvKw)} of ${kw(Number.isFinite(m.availKw) ? m.availKw : m.pvKw)}${(m.shed || []).length ? `<br>${m.shed.length} shed` : ""}`;
+  tip.innerHTML = `${t > tl.now ? "projected " : ""}${dayClock(t)}<br>battery ${fmt(m.soc, 0)}% · load ${kw(m.loadKw)}<br>solar ${kw(m.pvKw)} of ${kw(Number.isFinite(m.availKw) ? m.availKw : m.pvKw)}${(m.shed || []).length ? `<br>${m.shed.length} shed` : ""}${(m.held || []).length ? `<br>${m.held.length} held back` : ""}`;
   tip.hidden = false;
   const w = tip.offsetWidth;
   tip.style.left = `${Math.min(window.innerWidth - w - 8, ev.clientX + 12)}px`;
@@ -752,36 +765,25 @@ $("idle-toggle").addEventListener("click", () => { showIdle = !showIdle; renderL
 $("served-toggle").addEventListener("click", () => { showServed = !showServed; renderLive(); });
 for (const el of document.querySelectorAll(".js-now")) el.addEventListener("click", () => { playing = false; view = null; renderGauges(); drawPlayhead(); });
 
-/* The compact timeline takes over as soon as the full chart's bottom edge passes
-   under where the compact one sits. Showing it, the chart shrinks from the full
-   chart's height to MINI_H; hiding it, it grows back and fades. */
-let miniAnim = null, miniShown = false;
+/* The compact timeline is tied to the scroll, not to a timer. It appears as the full
+   chart starts to slide under the header, at the height of what's still visible of
+   it, and shrinks as you scroll until it reaches MINI_H; scrolling back up grows it
+   again until the full chart is clear of the header and it goes away. */
+let miniRaf = 0;
 function placeMini() {
+  if (!miniRaf) miniRaf = requestAnimationFrame(() => { miniRaf = 0; updateMini(); });
+}
+function updateMini() {
   const hdr = document.querySelector("body > header").offsetHeight;
   document.documentElement.style.setProperty("--hdr-h", `${hdr}px`);
-  const bar = $("tl-mini").querySelector(".tl-bar").offsetHeight || 44;
-  const show = !$("tab-live").hidden && !!tl && $("tl-chart").getBoundingClientRect().bottom < hdr + bar + MINI_H + 8;
-  if (show !== miniShown) animateMini(show);
-}
-function animateMini(show) {
-  miniShown = show;
-  if (miniAnim) cancelAnimationFrame(miniAnim);
-  const mini = $("tl-mini"), full = CHARTS[0].fullH || 250;
-  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const from = show ? full : MINI_H, to = show ? MINI_H : full, D = reduce ? 0 : 260, t0 = performance.now();
+  const mini = $("tl-mini"), c = CHARTS[1];
+  const r = $("tl-chart").getBoundingClientRect();
+  if ($("tab-live").hidden || !tl || r.top >= hdr) { mini.hidden = true; c.h = null; return; }
+  const wasHidden = mini.hidden;
   mini.hidden = false;
-  const step = (now) => {
-    // A frame's timestamp can precede t0 slightly, so clamp the progress to 0..1.
-    const k = D ? Math.max(0, Math.min(1, (now - t0) / D)) : 1, e = 1 - (1 - k) ** 3;   // ease out
-    drawChart(CHARTS[1], from + (to - from) * e);
-    drawPlayhead();
-    mini.style.opacity = show ? String(Math.min(1, 0.4 + e)) : String(1 - e);
-    if (k < 1) { miniAnim = requestAnimationFrame(step); return; }
-    miniAnim = null;
-    mini.style.opacity = "";
-    if (!show) mini.hidden = true;
-  };
-  miniAnim = requestAnimationFrame(step);
+  const bar = mini.querySelector(".tl-bar").offsetHeight;
+  const h = Math.round(Math.max(MINI_H, Math.min(CHARTS[0].fullH || 250, r.bottom - hdr - bar - 6)));
+  if (wasHidden || h !== c.h) { c.h = h; drawChart(c, h); drawPlayhead(); }
 }
 window.addEventListener("scroll", placeMini, { passive: true });
 
@@ -1190,7 +1192,9 @@ async function saveSettings() {
 }
 
 // ---------- loads (stored in policy.json as "devices") ----------
+let devRows = [];   // the devices as loaded, so fields the table doesn't show survive a save
 function renderDevices(devs) {
+  devRows = devs.map((d) => ({ ...d }));
   $("devrows").innerHTML = devs.map((d, i) => `<tr data-i="${i}">
     <td><input data-k="id" value="${esc(d.id)}" spellcheck="false"></td>
     <td><input data-k="name" value="${esc(d.name || "")}"></td>
@@ -1200,7 +1204,8 @@ function renderDevices(devs) {
     <td><input data-k="power_sensor" list="dl-power" value="${esc(d.power_sensor || "")}" spellcheck="false">
         <div class="muted" style="font-size:11px">${esc(d.power_sensor ? entityNow(d.power_sensor) : "")}</div></td>
     <td><input data-k="min_dwell_seconds" class="num" type="number" step="1" value="${d.min_dwell_seconds == null ? "" : esc(d.min_dwell_seconds)}" placeholder="300"></td>
-    <td><button class="btn" data-del="${i}">Remove</button></td></tr>`).join("") || '<tr><td colspan="7" class="muted">No loads yet.</td></tr>';
+    <td style="text-align:center"><input data-k="important" type="checkbox" ${d.important === false ? "" : "checked"} aria-label="Important"></td>
+    <td><button class="btn" data-del="${i}">Remove</button></td></tr>`).join("") || '<tr><td colspan="8" class="muted">No loads yet.</td></tr>';
   for (const b of document.querySelectorAll("[data-del]")) b.onclick = () => {
     const devs2 = readDevices(); devs2.splice(Number(b.dataset.del), 1); renderDevices(devs2);
   };
@@ -1208,10 +1213,12 @@ function renderDevices(devs) {
 
 function readDevices() {
   return [...document.querySelectorAll("#devrows tr[data-i]")].map((tr) => {
-    const d = {};
+    const d = { ...(devRows[Number(tr.dataset.i)] || {}) };
+    for (const k of ["name", "switch", "power_sensor", "min_dwell_seconds"]) delete d[k];   // the table owns these
     for (const el of tr.querySelectorAll("input[data-k]")) {
       const k = el.dataset.k, v = el.value.trim();
-      if (k === "kw") d.kw = Number(v);
+      if (k === "important") { if (el.checked) delete d.important; else d.important = false; }
+      else if (k === "kw") d.kw = Number(v);
       else if (k === "min_dwell_seconds") { if (v !== "") d.min_dwell_seconds = Number(v); }
       else if (v !== "" || k === "id") d[k] = v;
     }

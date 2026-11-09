@@ -65,12 +65,14 @@ function check(policy) {
     if (d.min_dwell_seconds != null && !(typeof d.min_dwell_seconds === "number" && d.min_dwell_seconds >= 0 && d.min_dwell_seconds <= 86400)) {
       problems.push(`device "${d.id}" min dwell must be 0-86400 s`);
     }
+    if (d.important != null && typeof d.important !== "boolean") problems.push(`device "${d.id}" "important" must be true or false`);
   }
   for (const [i, e] of policy.list.entries()) {
     if (!e || (e.type !== "load" && e.type !== "charge")) { problems.push(`list[${i}] "type" must be "load" or "charge"`); continue; }
     if (e.type === "charge" && !(typeof e.to === "number" && e.to >= 0 && e.to <= 100)) problems.push(`list[${i}] charge rung "to" must be 0-100`);
     if (e.type === "load") {
       if (!ids.has(e.dev)) problems.push(`list[${i}] references unknown device "${e.dev}"`);
+      if (e.important != null && typeof e.important !== "boolean") problems.push(`list[${i}] (${e.dev}) "important" must be true or false`);
       const c = Expr.compile(e.cond == null ? "0" : String(e.cond), VARS);
       if (!c.ok) problems.push(`list[${i}] (${e.dev}) condition: ${c.error}`);
     }

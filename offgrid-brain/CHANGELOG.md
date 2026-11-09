@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.20.0
+- **Important and convenience loads.** Loads are important unless marked
+  `"important": false` (the new **Important** column in Settings → Loads), and a
+  dispatch entry can override its load. Only important loads that can't run count
+  as **shed**: red in the Loads panel, on the timeline strip and in MQTT
+  `shed_count`. The rest are **held back**: grey, with a new `held_back_count`
+  sensor.
+- Settings → Loads keeps device fields the table doesn't show (zone settings,
+  importance) when you save; before, saving dropped them.
+- Live: the compact timeline is tied to the scroll instead of a timed animation.
+  It appears as the full chart slides under the header, shrinks as you scroll and
+  grows back as you scroll up. It now keeps the battery % and kW axis labels.
+
 ## 0.19.0
 - Live: the timeline is one chart instead of two stacked bands. Battery % reads on
   the left axis and kW on the right, over the full height, with the solar areas

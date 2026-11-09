@@ -11,6 +11,12 @@
      { type:"load", dev, cond, sp, gen } -> run `dev` if `cond` (expr -> 0..1)
                                  is met, at that service level.
 
+   Not every shed matters. A device is `important` unless it says otherwise
+   (devices[].important: false), and an entry can override its device either way
+   (list[].important). A device that ends up not running is FLAGGED only if one of
+   the entries that couldn't be served was important; otherwise it was merely held
+   back (an EV waiting for surplus, a comfort setpoint the battery can't afford).
+
    A device may appear MANY times = progressive service levels; each lower entry
    tops up to a better level, reached only if power remains at that depth.
    Keeping this faithful to sim.js is the whole point: a policy backtested
@@ -93,8 +99,9 @@ function decide(policy, ctx, limits) {
     if (!d) { trace.push({ i, type: "load", dev: e.dev, outcome: "unknown-device" }); continue; }
 
     const f = clamp01(C.fn(e.cond, d.name || e.dev)({ ...ctx, surplus: budgetKw, used: ctx.used || 0 }));
+    const important = e.important != null ? !!e.important : d.important !== false;
     const row = { i, type: "load", dev: e.dev, name: d.name || e.dev, cond: e.cond, f,
-                  gen: !!e.gen, floorPct, surplusKw: budgetKw };
+                  gen: !!e.gen, important, floorPct, surplusKw: budgetKw };
     if (f <= 1e-9) { trace.push({ ...row, outcome: "idle" }); continue; }   // rule says not now — not a shed
 
     const demand = (d.kw || 0) * f;
@@ -134,6 +141,8 @@ function decide(policy, ctx, limits) {
       name: d.name || e.dev,
       run: (prev && prev.run) || ok || unbacked,
       unbacked: (prev && prev.unbacked) || unbacked,
+      // an important entry went unserved (only matters if the device ends up not running)
+      missedImportant: (prev && prev.missedImportant) || (!ok && !unbacked && important),
       kw: served[e.dev] || 0,
       entry: i,
       sp: e.sp,
@@ -149,10 +158,13 @@ function decide(policy, ctx, limits) {
   }
 
   const decisions = Object.values(result);
+  for (const r of decisions) r.flagged = !r.run && r.missedImportant;
   return {
     decisions,
     charge: chargeKw,
     shed: decisions.filter((r) => !r.run),
+    flagged: decisions.filter((r) => !r.run && r.missedImportant),   // the sheds worth showing
+    heldBack: decisions.filter((r) => !r.run && !r.missedImportant),
     unbacked: decisions.filter((r) => r.unbacked),   // running, but on borrowed time
     deficitKw,
     budget: budgetKw,
