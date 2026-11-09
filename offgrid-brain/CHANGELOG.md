@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.22.0
+- Live: the header compacts along with the pinned timeline (less padding, a smaller
+  title and tighter tabs: 61 → 43 px), tied to the scroll like the rest. The page
+  below doesn't move.
+- Live: the compact timeline is taller, 80 px instead of 64.
+
 ## 0.21.4
 - Live: the timeline tooltip no longer sticks after scrolling. It hides as soon as
   the page scrolls, and whenever the pointer moves anywhere off the chart.

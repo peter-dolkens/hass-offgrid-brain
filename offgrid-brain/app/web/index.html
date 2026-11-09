@@ -27,15 +27,17 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 16px;
+  /* --hc (0..1) compacts the header as the pinned timeline shrinks; updatePin adds the
+     height it gives up back as margin, so the page below doesn't move. */
+  header { --hc: 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: calc(14px - 7px * var(--hc)) 16px;
            background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
-  header h1 { font-size: 17px; margin: 0; font-weight: 650; }
+  header h1 { font-size: calc(17px - 2px * var(--hc)); margin: 0; font-weight: 650; }
   .badge { font-size: 12px; font-weight: 650; padding: 2px 9px; border-radius: 999px; letter-spacing: .02em; }
   .badge.dry { background: var(--warn-bg); color: var(--warn); }
   .badge.live { background: var(--good-bg); color: var(--good); }
   .muted { color: var(--muted); }
   .spacer { flex: 1; }
-  nav button { background: none; border: 0; padding: 6px 12px; border-radius: 6px; color: var(--muted);
+  nav button { background: none; border: 0; padding: calc(6px - 2px * var(--hc)) 12px; border-radius: 6px; color: var(--muted);
                font: inherit; font-weight: 600; cursor: pointer; }
   nav button.on { background: var(--idle-bg); color: var(--text); }
   main { max-width: 1100px; margin: 0 auto; padding: 16px; }
@@ -661,7 +663,7 @@ function segments(list, key, maxGap) {
   if (cur.length) out.push(cur);
   return out;
 }
-const MINI_H = 64;
+const MINI_H = 80;
 function drawTimeline() {
   for (const c of CHARTS) drawChart(c, c.h);
 }
@@ -866,14 +868,26 @@ function morphBar(card, p) {
   bar.style.height = `${(barH0 * (1 - t)).toFixed(1)}px`;
 }
 
+let hdr0 = null;   // the header's natural height
+function compactHeader(p) {
+  const head = document.querySelector("body > header");
+  if (!p) { head.style.removeProperty("--hc"); head.style.marginBottom = ""; return (hdr0 = head.offsetHeight); }
+  if (hdr0 == null) hdr0 = head.offsetHeight;
+  head.style.setProperty("--hc", p.toFixed(3));
+  const h = head.offsetHeight;
+  head.style.marginBottom = `${hdr0 - h}px`;   // give back what it shed, so the page below stays put
+  return h;
+}
 function updatePin() {
-  const hdr = document.querySelector("body > header").offsetHeight;
+  const head = document.querySelector("body > header");
+  const hdr = hdr0 != null && head.style.getPropertyValue("--hc") ? hdr0 : head.offsetHeight;
   const slot = $("tl-slot"), card = $("tl-card"), c = CHARTS[0], foot = card.querySelector(".tl-foot");
   // the title's height (measured, not offsetTop: that is relative to the page until the card is pinned)
   const barOff = card.querySelector(".tl-bar").getBoundingClientRect().top - card.getBoundingClientRect().top;
   const sr = slot.getBoundingClientRect();
   const scrolled = hdr - sr.top - barOff;                     // how far past the pin point
   if ($("tab-live").hidden || !tl || scrolled <= 0) {
+    compactHeader(0);
     if (card.classList.contains("pinned") || c.h) { unpin(card); c.h = null; drawChart(c); }
     slot.style.height = "";
     footH = null;
@@ -888,8 +902,10 @@ function updatePin() {
   const h = Math.round(Math.max(MINI_H, full - scrolled));
   const p = full > MINI_H ? (full - h) / (full - MINI_H) : 1;
   const L = sr.left, R = document.documentElement.clientWidth - sr.right;
+  const hdrNow = compactHeader(p);
+  document.documentElement.style.setProperty("--hdr-h", `${hdrNow}px`);
   Object.assign(card.style, {
-    top: `${hdr - barOff}px`, left: `${L * (1 - p)}px`, right: `${R * (1 - p)}px`,
+    top: `${hdrNow - barOff}px`, left: `${L * (1 - p)}px`, right: `${R * (1 - p)}px`,
     borderRadius: `0 0 ${10 * (1 - p)}px ${10 * (1 - p)}px`,
     boxShadow: `0 6px 16px rgba(0, 0, 0, ${(0.1 * p).toFixed(3)})`,
     paddingLeft: `${L * p}px`, paddingRight: `${R * p}px`,    // content stays where it was
