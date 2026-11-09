@@ -12,7 +12,7 @@
     --accent: #2f6fd6; --good: #1e8a4c; --good-bg: #e3f4ea; --bad: #c33a2c; --bad-bg: #fbe6e3;
     --warn: #9a6200; --warn-bg: #fdf1d8; --idle: #77808c; --idle-bg: #eef0f3; --charge: #2f6fd6; --charge-bg: #e4edfb;
     /* Series colours: the reference palette's first three slots, validated as a set. */
-    --pv: #2a78d6; --solar-av: #b7d3f6; --batt: #1baf7a; --load: #eb6834; --track: #eceef1; --floor: #6b7685;
+    --pv: #2a78d6; --pv-2: #1d5fae; --solar-av: #b7d3f6; --batt: #1baf7a; --load: #eb6834; --track: #eceef1; --floor: #6b7685;
     --reserve: #d03b3b; --surge: #fdebd8; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   @media (prefers-color-scheme: dark) {
@@ -20,7 +20,7 @@
       --bg: #111418; --card: #1b2027; --text: #e6e9ee; --muted: #9aa5b3; --line: #2c333c;
       --accent: #6ea0ff; --good: #5cd08e; --good-bg: #173326; --bad: #ff8a7d; --bad-bg: #3a1d1a;
       --warn: #f2bd4b; --warn-bg: #362b12; --idle: #8d97a3; --idle-bg: #232a32; --charge: #7aa8ff; --charge-bg: #1c2a42;
-      --pv: #3987e5; --solar-av: #1f4a80; --batt: #199e70; --load: #d95926; --track: #262c34; --floor: #8d97a3;
+      --pv: #3987e5; --pv-2: #6aa7f0; --solar-av: #1f4a80; --batt: #199e70; --load: #d95926; --track: #262c34; --floor: #8d97a3;
       --reserve: #ff8a7d; --surge: #3a2a1a; color-scheme: dark;
     }
   }
@@ -171,7 +171,7 @@
       <div class="panel"><h3>Battery <span class="when" id="g-when-b"></span></h3><div id="g-batt"></div>
         <div class="legend"><span><i style="background:var(--batt)"></i>charge / charging</span><span><i style="background:var(--load)"></i>discharging</span><span><i style="background:var(--floor)"></i>floors</span></div></div>
       <div class="panel"><h3>Inverters <span class="when" id="g-when-l"></span></h3><div id="g-load"></div>
-        <div class="legend"><span><i style="background:var(--load)"></i>battery inverter supplying</span><span><i style="background:var(--batt)"></i>charging</span><span><i style="background:var(--surge)"></i>short-term (darker = shorter)</span><span><i style="background:var(--pv)"></i>solar delivered</span><span><i style="background:var(--solar-av)"></i>available</span></div>
+        <div class="legend"><span><i style="background:var(--pv)"></i>solar, one shade per inverter</span><span><i style="background:var(--solar-av)"></i>sun available</span><span><i style="background:var(--load)"></i>battery supplying</span><span><i style="background:var(--batt)"></i>charging</span><span><i style="background:var(--surge)"></i>short-term (darker = shorter)</span></div>
         <div class="sub" id="g-arrays"></div></div>
       <div class="panel"><h3>Loads <span class="when" id="g-when-d"></span></h3><div id="g-loads"></div></div>
     </div>
@@ -462,55 +462,67 @@ function inverterRings(m) {
   return { solar, ratings, battMax, share };
 }
 
+/* Split dial. Zero at 12 o'clock; the solar inverters fill anticlockwise up to
+   their combined AC rating (one segment each), and the battery inverter fills
+   clockwise up to its top short-term rating, through bands that darken as the time
+   allowed gets shorter. Both arms share one square-root scale (the longer arm is
+   150 degrees): watts at night stay readable without crushing the 7.5-13 kW
+   bands, and the shorter arm is the smaller inverter. */
 function loadGauge(m) {
-  const b = state.battery, START = -135, SPAN = 270, CX = 100, CY = 95;
+  const b = state.battery, CX = 120, CY = 112, R = 86, W = 15;
   const { solar, ratings, battMax, share } = inverterRings(m);
-  const ang = (v, max) => START + SPAN * Math.max(0, Math.min(1, v / max));
-  const ring = (r, w, a0, a1, color, extra = "") => `<path d="${arcPath(CX, CY, r, a0, a1)}" stroke="${color}" stroke-width="${w}" fill="none"${extra}/>`;
-  const parts = [];
-  // outer: battery inverter
-  const RB = 82, WB = 10;
-  parts.push(ring(RB, WB, START, START + SPAN, "var(--track)", ' stroke-linecap="round"'));
-  let lo = b.inverter_kw;
-  ratings.forEach((r, i) => { parts.push(ring(RB, WB, ang(lo, battMax), ang(r.kw, battMax), "var(--surge)", ` opacity="${(0.45 + (0.55 * (i + 1)) / ratings.length).toFixed(2)}"`)); lo = r.kw; });
-  if (Number.isFinite(share) && Math.abs(share) > 0.005) {
-    parts.push(ring(RB, WB - 4, START, Math.max(START + 1.5, ang(Math.abs(share), battMax)), share > 0 ? "var(--load)" : "var(--batt)", ' stroke-linecap="round"'));
+  const solarMax = solar.reduce((t, x) => t + x.max, 0);
+  const top = Math.max(solarMax, battMax, 1);
+  const ang = (v) => (150 * Math.sqrt(Math.max(0, v))) / Math.sqrt(top);   // kW -> degrees from 12 o'clock
+  const pt = (r, a) => [CX + r * Math.sin((a * Math.PI) / 180), CY - r * Math.cos((a * Math.PI) / 180)];
+  const ring = (a0, a1, color, w = W, extra = "") => `<path d="${arcPath(CX, CY, R, Math.min(a0, a1), Math.max(a0, a1, Math.min(a0, a1) + 0.05))}" stroke="${color}" stroke-width="${w}" fill="none"${extra}/>`;
+  const tick = (a, len = 9, color = "var(--floor)", w = 1.5) => { const [x0, y0] = pt(R - len + 1, a), [x1, y1] = pt(R + len, a); return `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="${color}" stroke-width="${w}"/>`; };
+  const label = (a, l, r = R + 22) => { const [x, y] = pt(r, a); return txt(x, y + 4, l, { size: 9.5, fill: "var(--muted)", mono: true }); };
+  const p = [];
+  // solar arm
+  const avail = solar.reduce((t, x) => t + (n(x.avail) || 0), 0);
+  p.push(ring(-ang(solarMax), 0, "var(--track)"));
+  if (avail > 0.01) p.push(ring(-ang(Math.min(avail, solarMax)), 0, "var(--solar-av)"));
+  let at = 0;
+  solar.forEach((x, i) => {
+    const v = Math.max(0, n(x.kw) || 0);
+    if (v > 0.01) p.push(`<g><title>${esc(x.name)}: ${kw(v)} of ${kw(x.avail)} available</title>${ring(-ang(at + v), -ang(at) - (at ? 0.8 : 0), i % 2 ? "var(--pv-2)" : "var(--pv)")}</g>`);
+    at += v;
+  });
+  const step = solarMax > 30 ? 10 : 5;
+  for (const v of [1, ...Array.from({ length: Math.ceil(solarMax / step) }, (_, i) => (i + 1) * step)].filter((v) => v < solarMax - 0.01)) {
+    p.push(tick(-ang(v))); p.push(label(-ang(v), v));
   }
-  // The top rating is the ring's end, so it gets no tick of its own.
+  // battery arm
+  p.push(ring(0, ang(battMax), "var(--track)"));
+  let lo = b.inverter_kw;
+  ratings.forEach((r, i) => { p.push(`<g><title>${r.kw} kW for ${durText(r.seconds)}</title>${ring(ang(lo), ang(r.kw), "var(--surge)", W, ` opacity="${(0.45 + (0.55 * (i + 1)) / ratings.length).toFixed(2)}"`)}</g>`); lo = r.kw; });
+  if (Number.isFinite(share) && Math.abs(share) > 0.005) p.push(ring(0, ang(Math.min(battMax, Math.abs(share))), share > 0 ? "var(--load)" : "var(--batt)", W - 6));
   let lastLabel = -999;
-  [{ kw: b.inverter_kw, title: `${b.inverter_kw} kW continuous` }, ...ratings.slice(0, -1).map((r) => ({ kw: r.kw, title: `${r.kw} kW for ${durText(r.seconds)}` }))].forEach((mk, i, all) => {
-    const deg = ang(mk.kw, battMax), a = (deg * Math.PI) / 180, last = i === all.length - 1;
-    const label = deg - lastLabel >= 12 || last;
-    if (label) lastLabel = deg;
-    parts.push(`<g><title>Battery inverter: ${mk.title}</title><line x1="${CX + (RB - 7) * Math.sin(a)}" y1="${CY - (RB - 7) * Math.cos(a)}" x2="${CX + (RB + 8) * Math.sin(a)}" y2="${CY - (RB + 8) * Math.cos(a)}" stroke="var(--floor)" stroke-width="1.5"/>`
-      + (label ? txt(CX + (RB + 16) * Math.sin(a), CY - (RB + 16) * Math.cos(a) + 3, `${+mk.kw.toFixed(2)}${last ? " kW" : ""}`, { size: 8.5, fill: "var(--muted)", mono: true }) : "") + "</g>");
+  [1, b.inverter_kw, ...ratings.slice(0, -1).map((r) => r.kw)].forEach((v) => {   // the arm's end is the top rating: no tick
+    p.push(tick(ang(v)));
+    if (ang(v) - lastLabel >= 8) { p.push(label(ang(v), +v.toFixed(2), R + 25)); lastLabel = ang(v); }
   });
-  // inner: one ring per solar inverter
-  solar.forEach((s, i) => {
-    const r = 67 - i * 13, w = 9;
-    parts.push(`<g><title>${esc(s.name)}: ${kw(s.kw)} of ${kw(s.avail)} available, ${s.max} kW AC</title>`
-      + ring(r, w, START, START + SPAN, "var(--track)", ' stroke-linecap="round"')
-      + (s.avail > 0.01 ? ring(r, w, START, ang(s.avail, s.max), "var(--solar-av)", ' stroke-linecap="round"') : "")
-      + (s.kw > 0.01 ? ring(r, w, START, ang(s.kw, s.max), "var(--pv)", ' stroke-linecap="round"') : "") + "</g>");
-  });
-  // ring names at their start
-  const tag = (r, l) => { const a = ((START - 9) * Math.PI) / 180; return txt(CX + r * Math.sin(a), CY - r * Math.cos(a) + 3, l, { size: 8, fill: "var(--muted)", w: 650, a: "end" }); };
-  parts.push(tag(RB, "bat"));
-  solar.forEach((s, i) => parts.push(tag(67 - i * 13, esc(String(s.name).replace(/^solar inverter\s*/i, "").replace(/[()]/g, "").slice(0, 1).toUpperCase() || i + 1))));
-  const sunAvail = solar.reduce((t, s) => t + (n(s.avail) || 0), 0), sunUsed = solar.reduce((t, s) => t + (n(s.kw) || 0), 0);
-  const foot = !solar.length ? "" : sunAvail < 0.05 ? "no sun" : sunAvail - sunUsed > 0.3 ? `${kw(sunAvail - sunUsed)} of sun unused` : "using all the sun";
+  p.push(tick(0, 12, "var(--text)", 2));
+  p.push(txt(CX, CY - R - 18, "0", { size: 10, mono: true, w: 600 }));
+  // readouts
+  const sunUsed = at;
+  p.push(txt(CX, CY - 22, kw(m.loadKw), { size: 28, w: 700 }));
+  p.push(txt(CX, CY - 6, "load", { size: 10, fill: "var(--muted)" }));
+  p.push(txt(CX - 44, CY + 14, "sun", { size: 10, w: 650, fill: "var(--pv)" }));
+  p.push(txt(CX - 44, CY + 28, kw(sunUsed), { size: 12, w: 600, mono: true }));
+  p.push(txt(CX + 44, CY + 14, share < -0.005 ? "charging" : "battery", { size: 10, w: 650, fill: share < -0.005 ? "var(--batt)" : "var(--load)" }));
+  p.push(txt(CX + 44, CY + 28, kw(Math.abs(Number.isFinite(share) ? share : NaN)), { size: 12, w: 600, mono: true }));
+  const foot = !solar.length ? "" : avail < 0.05 ? "no sun" : avail - sunUsed > 0.3 ? `${kw(avail - sunUsed)} of sun unused` : "using all the sun";
   let warn = "";
   if (share > b.inverter_kw) {
     const fits = ratings.find((r) => r.kw >= share);
     warn = fits ? `battery inverter at ${kw(share)}: allowed for ${durText(fits.seconds)}` : `battery inverter over its ${battMax} kW limit`;
   }
-  const batLine = !Number.isFinite(share) ? "" : share > 0.005 ? `battery supplies ${kw(share)}` : share < -0.005 ? `sun charges ${kw(-share)}` : "battery idle";
-  return `<svg viewBox="0 0 200 206" role="img" aria-label="Load ${kw(m.loadKw)}; ${esc(batLine)}">
-    ${parts.join("")}
-    ${txt(CX, CY + 2, kw(m.loadKw), { size: 20, w: 700 })}
-    ${txt(CX, CY + 16, "load", { size: 10, fill: "var(--muted)" })}
-    ${txt(CX, 186, batLine + (foot ? ` · ${foot}` : ""), { size: 10.5, w: 600 })}
-    ${warn ? txt(CX, 201, warn, { size: 10, fill: "var(--bad)", w: 600 }) : ""}
+  return `<svg viewBox="0 0 240 228" role="img" aria-label="Load ${kw(m.loadKw)}: sun ${kw(sunUsed)}, battery ${kw(share)}">
+    ${p.join("")}
+    ${foot ? txt(CX, 210, foot, { size: 10.5, w: 600 }) : ""}
+    ${warn ? txt(CX, 225, warn, { size: 10, fill: "var(--bad)", w: 600 }) : ""}
   </svg>`;
 }
 

@@ -1,6 +1,6 @@
 # Home Assistant add-on manifest. Installs into a supervised HAOS instance.
 name: Off-Grid Brain
-version: "0.16.2"
+version: "0.17.0"
 slug: offgrid_brain
 description: >-
   Load-shedding and dispatch brain for an off-grid solar + battery house. Walks

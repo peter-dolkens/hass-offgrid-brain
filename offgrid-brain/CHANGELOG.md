@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.17.0
+- Live: the Inverters gauge is now a **split dial**. Zero is at 12 o'clock. The
+  solar inverters fill anticlockwise to their combined AC rating, one shade each,
+  over the sun available. The battery inverter fills clockwise through its
+  short-term bands to its top rating, supplying or charging. Both arms share one
+  square-root scale, so small night loads stay visible and the shorter arm is the
+  smaller inverter.
+
 ## 0.16.2
 - Live: the battery inverter ring no longer marks its top rating; the ring's end is
   the maximum.
