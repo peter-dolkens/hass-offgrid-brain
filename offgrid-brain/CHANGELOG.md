@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.1
+- Settings: **Save settings** sits directly under the settings it saves, above the
+  battery, inverter and load cards (each of which has its own Save).
+- "Devices" is called **Loads** in the panel. It's still `devices` in policy.json.
+
 ## 0.11.0
 - **The battery and solar inverters are tiles**, each with a name and an
   **integration** that decides how it's read. Picking one reveals its fields:

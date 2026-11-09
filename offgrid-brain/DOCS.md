@@ -167,9 +167,10 @@ Settings → Readings maps the readings that don't belong to the battery or an
 inverter: **irradiance** (when no Ecowitt gateway is polled), **outdoor
 temperature** and the **solar forecast** for today (kWh). All are optional.
 
-### Devices: what the brain may switch
+### Loads: what the brain may switch
 
-Edited in Settings → Devices and stored in `policy.json`:
+Edited in Settings → **Loads** and stored in `policy.json` (as `devices`, the name
+the dispatch list and the simulator use):
 
 ```json
 { "id": "ev", "name": "EV charger", "kw": 7.0,
@@ -178,7 +179,7 @@ Edited in Settings → Devices and stored in `policy.json`:
 
 `kw` is the nameplate draw used for the power budget. The switch can be a
 `switch`, `input_boolean`, `light`, `fan`, `climate`, `water_heater` or
-`humidifier` entity; leave it empty to make the device advisory-only.
+`humidifier` entity; leave it empty to make the load advisory-only.
 `min_dwell_seconds` (default 300) is the minimum time between state changes.
 
 A device with no `switch` is **advisory only**: the brain reasons about its power

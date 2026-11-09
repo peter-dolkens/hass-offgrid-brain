@@ -180,6 +180,15 @@
   <section id="tab-settings" hidden>
     <div id="settings-form"><div class="empty">Loading settings…</div></div>
     <div class="card">
+      <div class="actions">
+        <button class="btn primary" id="btn-settings-save">Save settings</button>
+        <button class="btn" id="btn-settings-revert">Revert</button>
+        <span class="spacer"></span>
+        <span id="sstatus" class="muted"></span>
+      </div>
+      <ul class="problems" id="sproblems" hidden></ul>
+    </div>
+    <div class="card">
       <h2>Battery <span class="muted">The battery and its inverter: SoC, battery power, house load and energy, read through one integration.</span></h2>
       <div class="tile-grid" id="battery-tile"></div>
       <div class="actions">
@@ -199,22 +208,13 @@
       <ul class="problems" id="iproblems" hidden></ul>
     </div>
     <div class="card">
-      <div class="actions">
-        <button class="btn primary" id="btn-settings-save">Save settings</button>
-        <button class="btn" id="btn-settings-revert">Revert</button>
-        <span class="spacer"></span>
-        <span id="sstatus" class="muted"></span>
-      </div>
-      <ul class="problems" id="sproblems" hidden></ul>
-    </div>
-    <div class="card">
-      <h2>Devices <span class="muted">What the brain may switch. Stored in policy.json with the dispatch list; a device with no switch is advisory only.</span></h2>
+      <h2>Loads <span class="muted">What the brain may switch. Stored in policy.json with the dispatch list; a load with no switch is advisory only.</span></h2>
       <div style="overflow-x:auto"><table class="devtable"><thead><tr>
         <th>Id</th><th>Name</th><th>kW</th><th>Switch</th><th>Power sensor</th><th>Min dwell (s)</th><th></th>
       </tr></thead><tbody id="devrows"></tbody></table></div>
       <div class="actions">
-        <button class="btn" id="btn-dev-add">Add device</button>
-        <button class="btn primary" id="btn-dev-save">Save devices</button>
+        <button class="btn" id="btn-dev-add">Add load</button>
+        <button class="btn primary" id="btn-dev-save">Save loads</button>
         <span class="spacer"></span>
         <span id="dstatus" class="muted"></span>
       </div>
@@ -712,7 +712,7 @@ async function saveSettings() {
   setTimeout(refresh, 800);
 }
 
-// ---------- devices (stored in policy.json) ----------
+// ---------- loads (stored in policy.json as "devices") ----------
 function renderDevices(devs) {
   $("devrows").innerHTML = devs.map((d, i) => `<tr data-i="${i}">
     <td><input data-k="id" value="${esc(d.id)}" spellcheck="false"></td>
@@ -723,7 +723,7 @@ function renderDevices(devs) {
     <td><input data-k="power_sensor" list="dl-power" value="${esc(d.power_sensor || "")}" spellcheck="false">
         <div class="muted" style="font-size:11px">${esc(d.power_sensor ? entityNow(d.power_sensor) : "")}</div></td>
     <td><input data-k="min_dwell_seconds" class="num" type="number" step="1" value="${d.min_dwell_seconds == null ? "" : esc(d.min_dwell_seconds)}" placeholder="300"></td>
-    <td><button class="btn" data-del="${i}">Remove</button></td></tr>`).join("") || '<tr><td colspan="7" class="muted">No devices yet.</td></tr>';
+    <td><button class="btn" data-del="${i}">Remove</button></td></tr>`).join("") || '<tr><td colspan="7" class="muted">No loads yet.</td></tr>';
   for (const b of document.querySelectorAll("[data-del]")) b.onclick = () => {
     const devs2 = readDevices(); devs2.splice(Number(b.dataset.del), 1); renderDevices(devs2);
   };
