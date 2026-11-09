@@ -11,17 +11,19 @@
     --bg: #f5f6f8; --card: #ffffff; --text: #1c2128; --muted: #5f6b7a; --line: #dde2e8;
     --accent: #2f6fd6; --good: #1e8a4c; --good-bg: #e3f4ea; --bad: #c33a2c; --bad-bg: #fbe6e3;
     --warn: #9a6200; --warn-bg: #fdf1d8; --idle: #77808c; --idle-bg: #eef0f3; --charge: #2f6fd6; --charge-bg: #e4edfb;
-    /* Series colours: the reference palette's first three slots, validated as a set. */
-    --pv: #2a78d6; --pv-2: #1d5fae; --solar-av: #b7d3f6; --batt: #1baf7a; --load: #eb6834; --track: #eceef1; --floor: #6b7685;
-    --reserve: #d03b3b; --surge: #fdebd8; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    /* Series colours follow Home Assistant's Energy dashboard: solar orange, battery
+       teal (discharge) and pink (charge), the house blue. Short-term inverter bands
+       are a neutral blue-grey so they don't read as solar. */
+    --pv: #ff9800; --pv-2: #f57c00; --solar-av: #ffe0b2; --batt: #4db6ac; --batt-in: #f06292; --load: #488fc2;
+    --track: #eceef1; --floor: #6b7685; --reserve: #d03b3b; --surge: #b0bec5; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #111418; --card: #1b2027; --text: #e6e9ee; --muted: #9aa5b3; --line: #2c333c;
       --accent: #6ea0ff; --good: #5cd08e; --good-bg: #173326; --bad: #ff8a7d; --bad-bg: #3a1d1a;
       --warn: #f2bd4b; --warn-bg: #362b12; --idle: #8d97a3; --idle-bg: #232a32; --charge: #7aa8ff; --charge-bg: #1c2a42;
-      --pv: #3987e5; --pv-2: #6aa7f0; --solar-av: #1f4a80; --batt: #199e70; --load: #d95926; --track: #262c34; --floor: #8d97a3;
-      --reserve: #ff8a7d; --surge: #3a2a1a; color-scheme: dark;
+      --pv: #ff9800; --pv-2: #ffb74d; --solar-av: #5c3d0e; --batt: #4db6ac; --batt-in: #f06292; --load: #488fc2;
+      --track: #262c34; --floor: #8d97a3; --reserve: #ff8a7d; --surge: #546e7a; color-scheme: dark;
     }
   }
   * { box-sizing: border-box; }
@@ -224,9 +226,9 @@
     </div></div>
     <div class="gauges">
       <div class="panel"><h3>Battery <span class="when" id="g-when-b"></span></h3><div id="g-batt"></div>
-        <div class="legend"><span><i style="background:var(--batt)"></i>charge / charging</span><span><i style="background:var(--load)"></i>discharging</span><span><i style="background:var(--floor)"></i>floors</span></div></div>
+        <div class="legend"><span><i style="background:var(--batt)"></i>charge / discharging</span><span><i style="background:var(--batt-in)"></i>charging</span><span><i style="background:var(--floor)"></i>floors</span></div></div>
       <div class="panel"><h3>Inverters <span class="when" id="g-when-l"></span></h3><div id="g-load"></div>
-        <div class="legend"><span><i style="background:var(--pv)"></i>solar, one shade per inverter</span><span><i style="background:var(--solar-av)"></i>sun available</span><span><i style="background:var(--load)"></i>battery supplying</span><span><i style="background:var(--batt)"></i>charging</span><span><i style="background:var(--surge)"></i>short-term (darker = shorter)</span></div>
+        <div class="legend"><span><i style="background:var(--pv)"></i>solar, one shade per inverter</span><span><i style="background:var(--solar-av)"></i>sun available</span><span><i style="background:var(--batt)"></i>battery supplying</span><span><i style="background:var(--batt-in)"></i>charging</span><span><i style="background:var(--surge)"></i>short-term (darker = shorter)</span></div>
         <div class="sub" id="g-arrays"></div></div>
       <div class="panel"><h3>Loads <span class="when" id="g-when-d"></span></h3><div id="g-loads"></div></div>
     </div>
@@ -486,7 +488,7 @@ function batteryGauge(m) {
     <path d="${arcPath(100, 95, 78, START, START + SPAN)}" stroke="var(--track)" stroke-width="14" fill="none" stroke-linecap="round"/>
     ${Number.isFinite(soc) ? `<path d="${arcPath(100, 95, 78, START, ang(Math.max(0.005, soc / 100)))}" stroke="var(--batt)" stroke-width="14" fill="none" stroke-linecap="round"/>` : ""}
     <path d="${arcPath(100, 95, 60, START, START + SPAN)}" stroke="var(--track)" stroke-width="5" fill="none" stroke-linecap="round"/>
-    ${rateF > 0.003 ? `<path d="${arcPath(100, 95, 60, START, ang(rateF))}" stroke="${rate >= 0 ? "var(--batt)" : "var(--load)"}" stroke-width="5" fill="none" stroke-linecap="round"/>` : ""}
+    ${rateF > 0.003 ? `<path d="${arcPath(100, 95, 60, START, ang(rateF))}" stroke="${rate >= 0 ? "var(--batt-in)" : "var(--batt)"}" stroke-width="5" fill="none" stroke-linecap="round"/>` : ""}
     ${ticks}
     ${txt(100, 92, Number.isFinite(soc) ? `${soc.toFixed(1)}%` : "—", { size: 26, w: 700 })}
     ${txt(100, 112, rate > 0.02 ? `charging ${kw(rate)}` : rate < -0.02 ? `discharging ${kw(-rate)}` : "idle", { size: 11.5, fill: "var(--muted)" })}
@@ -558,7 +560,7 @@ function loadGauge(m) {
   p.push(ring(0, ang(battMax), "var(--track)"));
   let lo = b.inverter_kw;
   ratings.forEach((r, i) => { p.push(`<g><title>${r.kw} kW for ${durText(r.seconds)}</title>${ring(ang(lo), ang(r.kw), "var(--surge)", W, ` opacity="${(0.45 + (0.55 * (i + 1)) / ratings.length).toFixed(2)}"`)}</g>`); lo = r.kw; });
-  if (Number.isFinite(share) && Math.abs(share) > 0.005) p.push(ring(0, ang(Math.min(battMax, Math.abs(share))), share > 0 ? "var(--load)" : "var(--batt)", W - 6));
+  if (Number.isFinite(share) && Math.abs(share) > 0.005) p.push(ring(0, ang(Math.min(battMax, Math.abs(share))), share > 0 ? "var(--batt)" : "var(--batt-in)", W - 6));
   let lastLabel = -999;
   [1, b.inverter_kw, ...ratings.slice(0, -1).map((r) => r.kw)].forEach((v) => {   // the arm's end is the top rating: no tick
     p.push(tick(ang(v)));
@@ -572,7 +574,7 @@ function loadGauge(m) {
   p.push(txt(CX, CY - 6, "load", { size: 10, fill: "var(--muted)" }));
   p.push(txt(CX - 44, CY + 14, "sun", { size: 10, w: 650, fill: "var(--pv)" }));
   p.push(txt(CX - 44, CY + 28, kw(sunUsed), { size: 12, w: 600, mono: true }));
-  p.push(txt(CX + 44, CY + 14, share < -0.005 ? "charging" : "battery", { size: 10, w: 650, fill: share < -0.005 ? "var(--batt)" : "var(--load)" }));
+  p.push(txt(CX + 44, CY + 14, share < -0.005 ? "charging" : "battery", { size: 10, w: 650, fill: share < -0.005 ? "var(--batt-in)" : "var(--batt)" }));
   p.push(txt(CX + 44, CY + 28, kw(Math.abs(Number.isFinite(share) ? share : NaN)), { size: 12, w: 600, mono: true }));
   const foot = !solar.length ? "" : avail < 0.05 ? "no sun" : avail - sunUsed > 0.3 ? `${kw(avail - sunUsed)} of sun unused` : "using all the sun";
   let warn = "";

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.22.2
+- Live: colours follow Home Assistant's Energy dashboard. Solar is orange (one
+  shade per inverter, pale for sun available), the battery is teal, discharging
+  and supplying the house teal, charging pink, and the house load blue. The
+  battery inverter's short-term bands are a neutral blue-grey.
+
 ## 0.22.1
 - Live: after folding, the timeline's control pill glides up into the header and
   settles just right of "Off-Grid Brain", pushing DRY RUN / LIVE and the version
