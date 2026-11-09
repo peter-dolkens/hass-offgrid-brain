@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.1
+- Live: dispatch entries that an earlier entry already served are hidden by
+  default. A button under the list shows them; entry numbers stay as in the policy.
+
 ## 0.15.0
 - New Live page. A timeline at the top shows the last 24 h, recorded by the brain
   itself (one sample a minute, kept across restarts), and the next 24 h, projected
