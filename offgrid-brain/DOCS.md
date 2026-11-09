@@ -251,7 +251,8 @@ diff against the simulator's defaults. A starter file is written on first run.
   gen-backed load, the brain raises a **deficit** and keeps it running.
 
 Expression variables: `occ dark sun hour dow weekend month soc pv surplus tout
-forecast used gap season autonomy`.
+forecast used gap season autonomy`. `autonomy` is in **days** in conditions,
+as in the simulator; the panel, log and MQTT sensor show it in hours.
 
 ## Safety
 

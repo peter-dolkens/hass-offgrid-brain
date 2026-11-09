@@ -174,8 +174,10 @@ class MqttSink {
       });
     }
     this.publish("sensor", "deficit_power", num(result.deficitKw * 1000, 0), { name: "Deficit", ...power, icon: "mdi:alert" });
-    this.publish("sensor", "autonomy", num(ctx.autonomy, 2),
-      { name: "Autonomy", unit_of_measurement: "d", state_class: "measurement", icon: "mdi:battery-clock" });
+    // Policy conditions use days (as the simulator does); people read hours.
+    this.publish("sensor", "autonomy", num(ctx.autonomy * 24, 1),
+      { name: "Autonomy", unit_of_measurement: "h", device_class: "duration", state_class: "measurement",
+        suggested_display_precision: 0, icon: "mdi:battery-clock" });
     this.publish("sensor", "floor", result.floorPct,
       { name: "Deepest floor", unit_of_measurement: "%", icon: "mdi:format-vertical-align-bottom" });
     this.publish("sensor", "shed_count", result.shed.length,

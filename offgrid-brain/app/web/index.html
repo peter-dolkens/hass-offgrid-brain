@@ -212,7 +212,7 @@ function renderLive() {
   if (s.starting) return;
 
   const tickAge = (Date.now() - Date.parse(s.time)) / 1000;
-  $("age").textContent = `updated ${ago(tickAge).replace(" old", " ago")}`;
+  showAge();
 
   const banners = [];
   if (s.safeMode) banners.push(`<div class="banner bad">Safe mode: no fresh battery reading, so the brain assumes the ${s.battery.reserve_pct}% reserve and sheds everything discretionary.</div>`);
@@ -231,7 +231,7 @@ function renderLive() {
       ? ["Solar", `${watts(s.solar.deliveredKw)} / ${watts(s.solar.availableKw)}`,
          `delivered / available${s.solar.curtailed ? " · throttled" : ""} · ${fmt(s.solar.irradiance.value, 0)} W/m²`]
       : ["Solar", watts(i.pvKw.value), src(i.pvKw)],
-    ["Autonomy", `${fmt(s.ctx.autonomy, 2)} d`, "usable battery ÷ worst expected daily deficit"],
+    ["Autonomy", `${fmt(s.ctx.autonomy * 24, 0)} h`, "usable battery ÷ worst expected deficit"],
     ["Charging", watts(s.result.chargeKw), `spare solar after the list: ${watts(s.result.budgetKw)}`],
     ["Devices", `${running} / ${s.result.decisions.length}`, `running · ${s.result.decisions.length - running} shed`],
   ];
@@ -267,6 +267,13 @@ function renderSolar(sol) {
       <div><span class="chip ${a.curtailed ? "partial" : "granted"}">${a.curtailed ? "throttled" : "at capacity"}</span></div></div>`;
   }).join("");
   $("solar").innerHTML = head + rows;
+}
+
+// Ticks every second between refreshes, so it's obvious the page is live.
+function showAge() {
+  if (!state || state.starting || !state.time) return;
+  const sec = Math.max(0, Math.round((Date.now() - Date.parse(state.time)) / 1000));
+  $("age").textContent = `updated ${sec} s ago`;
 }
 
 async function refresh() {
@@ -384,6 +391,7 @@ for (const b of document.querySelectorAll("nav button")) {
 
 refresh();
 setInterval(() => { if (!$("tab-live").hidden) refresh(); }, 5000);
+setInterval(showAge, 1000);
 </script>
 </body>
 </html>

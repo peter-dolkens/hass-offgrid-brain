@@ -211,7 +211,7 @@ async function main() {
       `tick soc=${Number.isFinite(socEnt.value) ? socEnt.value.toFixed(1) : "??"}%(${socEnt.from}) ` +
       `load=${Number.isFinite(loadKw) ? (loadKw * 1000).toFixed(0) : "??"}W(${loadEnt.from}) ` +
       `pv=${(ctx.pv * 1000).toFixed(0)}W(${pvEnt.from}) ` +
-      `autonomy=${ctx.autonomy.toFixed(2)}d floor=${result.floorPct}% ` +
+      `autonomy=${(ctx.autonomy * 24).toFixed(0)}h floor=${result.floorPct}% ` +
       `run=[${result.decisions.filter((d) => d.run).map((d) => d.id).join(",")}] ` +
       `shed=[${result.shed.map((d) => d.id).join(",")}]`;
     const signature = `${safeMode}|${result.decisions.map((d) => `${d.id}:${d.run}`).join(",")}`;

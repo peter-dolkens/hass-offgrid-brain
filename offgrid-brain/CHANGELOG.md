@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1
+- Panel: "updated N s ago" ticks every second, so it's obvious the view is live.
+- Autonomy is shown in hours: panel tile, log line and the MQTT sensor (now a
+  duration in h). Policy conditions still use days, as the simulator does.
+
 ## 0.8.0
 - **Available solar.** Off grid the battery inverter throttles AC-coupled solar to the
   load once the battery is full, so delivered PV understates the sun. The brain now
