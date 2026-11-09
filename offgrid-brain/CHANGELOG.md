@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.1
+- Settings → Solar inverters has its own **Add inverter** and **Save inverters**
+  buttons, like Devices; **Save settings** no longer saves the inverter list.
+  Inverters the bridge reports keep a fixed key; rows added by hand, or no longer
+  reported, can be edited and removed.
+
 ## 0.10.0
 - **Solar inverters are configured individually.** Each has its own AC rating and
   array kWp (blank = the inverter's own configured PV peak), in a new Settings →

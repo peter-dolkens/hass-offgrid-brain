@@ -172,8 +172,15 @@
     <div class="card">
       <h2>Solar inverters <span class="muted">Each AC-coupled inverter's AC rating and array size, for the available-solar estimate. Inverters the bridge reports are listed automatically; kWp left blank uses the inverter's own configured PV peak.</span></h2>
       <div style="overflow-x:auto"><table class="devtable"><thead><tr>
-        <th>Key</th><th>Name</th><th>AC rating (kW)</th><th>Array (kWp)</th><th></th>
+        <th>Key</th><th>Name</th><th>AC rating (kW)</th><th>Array (kWp)</th><th></th><th></th>
       </tr></thead><tbody id="invrows"></tbody></table></div>
+      <div class="actions">
+        <button class="btn" id="btn-inv-add">Add inverter</button>
+        <button class="btn primary" id="btn-inv-save">Save inverters</button>
+        <span class="spacer"></span>
+        <span id="istatus" class="muted"></span>
+      </div>
+      <ul class="problems" id="iproblems" hidden></ul>
     </div>
     <div class="card">
       <div class="actions">
@@ -531,43 +538,65 @@ function readSettings() {
     else v = Number(el.value);
     setPath(s, path, v);
   }
-  s.solar = { inverters: readInverters() };   // replaces the pre-0.10 single values
+  s.solar = { inverters: (settingsSaved.solar && settingsSaved.solar.inverters) || [] };   // saved on their own
   return s;
 }
 
-// ---------- solar inverters (part of settings) ----------
-let invKeys = [];
-function renderInverters(configured) {
+// ---------- solar inverters (saved on their own) ----------
+/* Rows = configured inverters plus any the bridge reports that aren't configured
+   yet. A reported inverter's key is fixed (it's how the bridge names it); rows
+   added by hand, or no longer reported, can be edited and removed. */
+function inverterRows(configured) {
   const disc = (state && state.solar && state.solar.discovered) || [];
-  const byKey = new Map(configured.map((c) => [c.key, c]));
+  const byKey = new Map(configured.map((c) => [c.key, { ...c }]));
   for (const d of disc) if (!byKey.has(d.key)) byKey.set(d.key, { key: d.key, name: d.name, ac_kw: null, kwp: null });
-  const rows = [...byKey.values()];
-  invKeys = rows.map((r) => r.key);
-  const seen = new Map(disc.map((d) => [d.key, d]));
+  return [...byKey.values()];
+}
+
+function renderInverters(rows) {
+  const disc = new Map(((state && state.solar && state.solar.discovered) || []).map((d) => [d.key, d]));
   $("invrows").innerHTML = rows.map((r, i) => {
-    const d = seen.get(r.key);
-    const note = !d ? "not reported by the bridge right now"
+    const d = disc.get(r.key);
+    const keyCell = d ? `<code>${esc(r.key)}</code><input data-k="key" type="hidden" value="${esc(r.key)}">`
+      : `<input data-k="key" value="${esc(r.key || "")}" placeholder="bridge key" spellcheck="false">`;
+    const note = !d ? (r.key ? "not reported by the bridge right now" : "new")
       : r.ac_kw == null ? '<span class="live-warn">needs an AC rating</span>' : "reported by the bridge";
     return `<tr data-inv="${i}">
-      <td><code>${esc(r.key)}</code></td>
+      <td>${keyCell}</td>
       <td><input data-k="name" value="${esc(r.name || "")}"></td>
       <td><input data-k="ac_kw" class="num" type="number" step="any" value="${r.ac_kw == null ? "" : esc(r.ac_kw)}" placeholder="kW"></td>
       <td><input data-k="kwp" class="num" type="number" step="any" value="${r.kwp == null ? "" : esc(r.kwp)}"
         placeholder="${d && Number.isFinite(d.kwp) ? esc(d.kwp) : "kWp"}"></td>
-      <td class="muted" style="font-size:12px">${note}</td></tr>`;
-  }).join("") || '<tr><td colspan="5" class="muted">No inverters reported yet. They appear here once the SP PRO bridge reads them.</td></tr>';
+      <td class="muted" style="font-size:12px">${note}</td>
+      <td>${d ? "" : `<button class="btn" data-inv-del="${i}">Remove</button>`}</td></tr>`;
+  }).join("") || '<tr><td colspan="6" class="muted">No inverters yet. Reported inverters appear here once the SP PRO bridge reads them, or add one.</td></tr>';
+  for (const b of document.querySelectorAll("[data-inv-del]")) b.onclick = () => {
+    const next = readInverters(); next.splice(Number(b.dataset.invDel), 1); renderInverters(next);
+  };
 }
 
 function readInverters() {
   return [...document.querySelectorAll("#invrows tr[data-inv]")].map((tr) => {
-    const x = { key: invKeys[Number(tr.dataset.inv)] };
+    const x = {};
     for (const el of tr.querySelectorAll("input[data-k]")) {
       const v = el.value.trim();
-      if (el.dataset.k === "name") x.name = v;
+      if (el.dataset.k === "key" || el.dataset.k === "name") x[el.dataset.k] = v;
       else x[el.dataset.k] = v === "" ? null : Number(v);
     }
     return x;
   });
+}
+
+async function saveInverters() {
+  const next = { ...settingsSaved, solar: { inverters: readInverters() } };
+  const r = await fetch("api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ settings: next }) });
+  const out = await r.json();
+  if (!r.ok) { showList($("iproblems"), out.problems || [out.error]); $("istatus").textContent = "Not saved."; return; }
+  showList($("iproblems"), []);
+  settingsSaved = next;
+  renderInverters(inverterRows(settingsSaved.solar.inverters));
+  $("istatus").textContent = "Saved and applied.";
+  setTimeout(refresh, 800);
 }
 
 function showList(el, list) { el.innerHTML = list.map((p) => `<li>${esc(p)}</li>`).join(""); el.hidden = !list.length; }
@@ -581,7 +610,8 @@ async function loadSettingsTab() {
   fillDatalists();
   settingsSaved = st.settings;
   renderSettings(settingsSaved);
-  renderInverters((settingsSaved.solar && settingsSaved.solar.inverters) || []);
+  renderInverters(inverterRows((settingsSaved.solar && settingsSaved.solar.inverters) || []));
+  $("istatus").textContent = ""; showList($("iproblems"), []);
   $("sstatus").textContent = `${st.path} · ${entities.length} Home Assistant entities available`;
   showList($("sproblems"), []);
   const pol = await fetch("api/policy", { cache: "no-store" }).then((r) => r.json());
@@ -649,9 +679,11 @@ async function saveDevices() {
 }
 
 $("btn-settings-save").onclick = saveSettings;
-$("btn-settings-revert").onclick = () => { renderSettings(settingsSaved); renderInverters(settingsSaved.solar.inverters || []); showList($("sproblems"), []); $("sstatus").textContent = "Reverted to the saved settings."; };
+$("btn-settings-revert").onclick = () => { renderSettings(settingsSaved); showList($("sproblems"), []); $("sstatus").textContent = "Reverted to the saved settings."; };
 $("btn-dev-add").onclick = () => { const d = readDevices(); d.push({ id: "", name: "", kw: 0 }); renderDevices(d); };
 $("btn-dev-save").onclick = saveDevices;
+$("btn-inv-add").onclick = () => { const rows = readInverters(); rows.push({ key: "", name: "", ac_kw: null, kwp: null }); renderInverters(rows); };
+$("btn-inv-save").onclick = saveInverters;
 
 // ---------- tabs ----------
 for (const b of document.querySelectorAll("nav button")) {
