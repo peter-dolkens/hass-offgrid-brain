@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.21.1
+- Live: the timeline's own controls now fold into the pill as it shrinks, instead
+  of being swapped for a copy. "Replay" slides away to leave ▶, the unselected
+  speeds collapse, the selected one rounds into a chip with ▾ (tap it for the
+  speed menu once folded), "Back to now" shortens to "now ⟲", and the row's outline
+  fades in around them. The time now sits next to the play button.
+- Live: the timeline's top-right label reads "15 kW" on one line; the separate
+  "kW" and "battery" axis titles are gone, leaving the raw percentages on the left.
+
 ## 0.21.0
 - Live: as the pinned timeline shrinks, its controls fold into one pill:
   **▶ time · 60× ▾**. The play side plays and pauses, the speed chip opens a small

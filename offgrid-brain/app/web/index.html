@@ -57,20 +57,29 @@
   #tl-card { margin-bottom: 0; }
   #tl-card.pinned { position: fixed; z-index: 1; }
   #tl-card .tl-foot { overflow: hidden; }
-  .tl-full { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; }
-  .tl-pill { display: inline-flex; align-items: center; gap: 7px; position: relative; border: 1px solid var(--line); border-radius: 999px;
-             padding: 2px 5px 2px 10px; background: var(--card); white-space: nowrap; transform-origin: left center; }
-  .tl-pill button { font: inherit; border: 0; background: none; color: var(--text); cursor: pointer; padding: 2px 0; }
-  .pill-play { font-weight: 650 !important; display: inline-flex; gap: 6px; align-items: center; }
-  .pill-play .js-time { font: 600 12.5px var(--mono); }
-  .pill-speed, .pill-now { font-size: 11px !important; font-weight: 650 !important; border-radius: 999px !important; padding: 2px 8px !important; }
-  .pill-speed { background: var(--accent) !important; color: #fff !important; }
-  .pill-now { background: var(--idle-bg) !important; }
-  .pill-menu { position: absolute; top: calc(100% + 6px); left: 0; display: flex; flex-direction: column; min-width: 90px; z-index: 3;
-               background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .15); overflow: hidden; }
-  .pill-menu button { text-align: left; padding: 7px 12px !important; font-size: 13px !important; font-weight: 600 !important; }
-  .pill-menu button.on { background: var(--accent) !important; color: #fff !important; }
-  .tl-pill button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* The controls row morphs with --t, 0 (full row) to 1 (pill). */
+  .tl-bar { --t: 0; padding-top: calc(10px - 6px * var(--t)); }
+  .tl-full { display: flex; flex-wrap: wrap; align-items: center; position: relative; gap: 8px calc(12px - 6px * var(--t));
+             padding: calc(2px * var(--t)) calc(5px * var(--t)) calc(2px * var(--t)) calc(10px * var(--t));
+             border: 1px solid color-mix(in srgb, var(--line) calc(100% * var(--t)), transparent); border-radius: 999px; }
+  .tl-full .btn { padding: calc(7px - 5px * var(--t)) calc(14px - 14px * var(--t)); border-color: color-mix(in srgb, var(--line) calc(100% - 100% * var(--t)), transparent);
+                  border-radius: calc(7px + 20px * var(--t)); white-space: nowrap; }
+  .tl-full .btn.js-now { padding-inline: calc(14px - 6px * var(--t)); background: color-mix(in srgb, var(--idle-bg) calc(100% * var(--t)), var(--card)); font-size: calc(14px - 3px * var(--t)); }
+  /* Max widths match each label's own width, so they narrow steadily rather than hold
+     empty space and then snap shut. */
+  .tl-full .lab { display: inline-block; overflow: hidden; white-space: nowrap; vertical-align: bottom; max-width: calc(58px * (1 - var(--t))); opacity: calc(1 - var(--t)); }
+  .tl-full #tl-note { max-width: calc(420px * (1 - var(--t))); }
+  .tl-full .lab-in { display: inline-block; overflow: hidden; white-space: nowrap; vertical-align: bottom; max-width: calc(18px * var(--t)); opacity: calc(2 * var(--t) - 1); }
+  .tl-full .tl-time { font-size: calc(15px - 2.5px * var(--t)); }
+  .tl-full .seg { border-color: color-mix(in srgb, var(--line) calc(100% - 100% * var(--t)), transparent); border-radius: calc(7px + 20px * var(--t)); }
+  .tl-full .seg button { white-space: nowrap; overflow: hidden; }
+  .tl-full .seg button:not(.on) { max-width: calc(46px * (1 - var(--t))); padding-inline: calc(9px * (1 - var(--t))); opacity: calc(1 - var(--t)); }
+  .tl-full .seg button.on { padding: calc(6px - 4px * var(--t)) calc(9px - 1px * var(--t)); font-size: calc(12px - 1px * var(--t)); }
+  .tl-full .caret { border: 0; background: none; color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; padding: 0; margin-left: calc(-6px * var(--t)); }
+  .speed-menu { position: absolute; top: calc(100% + 6px); left: 0; display: flex; flex-direction: column; min-width: 90px; z-index: 3;
+                background: var(--card); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 18px rgba(0, 0, 0, .15); overflow: hidden; }
+  .speed-menu button { font: inherit; font-size: 13px; font-weight: 600; text-align: left; padding: 7px 12px; border: 0; background: none; color: var(--text); cursor: pointer; }
+  .speed-menu button.on { background: var(--accent); color: #fff; }
 
   .tl-chart svg, .gauges svg { display: block; width: 100%; height: auto; overflow: visible; }
   .gauges svg { max-width: 260px; margin: 0 auto; }
@@ -181,21 +190,19 @@
     <!-- The slot keeps the card's place in the page while the card itself is pinned. -->
     <div id="tl-slot"><div class="card" id="tl-card">
       <h2>Timeline <span class="muted">The last 24 h as the brain recorded it, and the next 24 h projected from the solar forecast and the last day's load. Click or drag to look at any moment.</span></h2>
+      <!-- One set of controls. As the pinned card shrinks they fold into a pill: the
+           labels narrow away, the unselected speeds collapse, the selected one becomes a
+           chip, and the row's own outline appears around them (all from --t). -->
       <div class="tl-bar">
         <span class="tl-full">
-          <button class="btn js-play" aria-label="Replay the recorded day">▶ Replay</button>
-          <span class="seg js-speed" role="group" aria-label="Replay speed"><button data-speed="60">60×</button><button data-speed="600">600×</button><button data-speed="900">900×</button></span>
-          <button class="btn js-now" hidden>Back to now</button>
+          <button class="btn js-play" aria-label="Play or pause the replay"><span class="js-play-icon">▶</span><span class="lab js-play-label">&nbsp;Replay</span></button>
           <span class="tl-time js-time">now</span>
-          <span class="muted" id="tl-note"></span>
-        </span>
-        <!-- The same controls as one pill, for the compact timeline: play | time · speed -->
-        <span class="tl-pill" hidden>
-          <button class="pill-play js-pill-play" aria-label="Play or pause the replay"><span class="js-pill-icon">▶</span> <span class="js-time">now</span></button>
-          <span class="muted">·</span>
-          <button class="pill-speed" aria-haspopup="menu" aria-label="Replay speed"><span class="js-speed-label">60×</span> ▾</button>
-          <button class="pill-now js-now" hidden title="Back to now">now ⟲</button>
-          <span class="pill-menu js-speed" role="menu" hidden><button data-speed="60">60×</button><button data-speed="600">600×</button><button data-speed="900">900×</button></span>
+          <span class="lab-in dot muted">·</span>
+          <span class="seg js-speed" role="group" aria-label="Replay speed"><button data-speed="60">60×</button><button data-speed="600">600×</button><button data-speed="900">900×</button></span>
+          <button class="lab-in caret" aria-label="Choose replay speed" aria-haspopup="menu">▾</button>
+          <button class="btn js-now" hidden><span class="lab">Back to&nbsp;</span>now<span class="lab-in">&nbsp;⟲</span></button>
+          <span class="muted lab" id="tl-note"></span>
+          <span class="speed-menu js-speed" role="menu" hidden><button data-speed="60">60×</button><button data-speed="600">600×</button><button data-speed="900">900×</button></span>
         </span>
       </div>
       <div class="tl-chart" id="tl-chart"><div class="empty">Loading…</div></div>
@@ -631,8 +638,8 @@ function renderGauges() {
     : arrays.filter((a) => a.availableKw > 0.05).map((a) => `${esc(a.name)} ${kw(a.kw)} of ${kw(a.availableKw)}${a.curtailed ? " (throttled)" : ""}`).join(" · ");
   for (const el of document.querySelectorAll(".js-time")) el.textContent = view == null ? "now" : dayClock(view);
   for (const el of document.querySelectorAll(".js-now")) el.hidden = view == null;
-  for (const el of document.querySelectorAll(".js-play")) el.textContent = playing ? "❚❚ Pause" : view == null ? "▶ Replay" : "▶ Play";
-  for (const el of document.querySelectorAll(".js-pill-icon")) el.textContent = playing ? "❚❚" : "▶";
+  for (const el of document.querySelectorAll(".js-play-icon")) el.textContent = playing ? "❚❚" : "▶";
+  for (const el of document.querySelectorAll(".js-play-label")) el.innerHTML = `&nbsp;${playing ? "Pause" : view == null ? "Replay" : "Play"}`;
 }
 
 // ----- the timeline chart -----
@@ -671,7 +678,7 @@ function drawChart(c, height) {
   const kwMax = niceMax(Math.max(0.5, ...all.map((p) => Math.max(n(p.loadKw) || 0, n(p.pvKw) || 0, n(p.availKw) || 0))));
   // One plot: battery % on the left axis and kW on the right, over the same height.
   // The right margin fits its widest label ("12.5 kW" once compact) with room to spare.
-  const rLabel = `${+kwMax.toFixed(2)}${cp ? " kW" : ""}`;
+  const rLabel = `${+kwMax.toFixed(2)} kW`;
   const M = { l: 43, r: Math.max(43, Math.ceil(rLabel.length * 6.2) + 10), t: mix(6, 14) };
   const top = M.t, bot = mix(H * 0.8, H - 34);
   const shedY = mix(H * 0.84, H - 28), axisY = H - 6, shedH = mix(3, 6);
@@ -689,10 +696,9 @@ function drawChart(c, height) {
     const y = top + (1 - g) * (bot - top);
     const html = `<line x1="${M.l}" x2="${W - M.r}" y1="${y}" y2="${y}" stroke="var(--line)"/>`
       + txt(M.l - 5, y + 3, `${g * 100}%`, { a: "end", size: 10, fill: "var(--muted)", mono: true })
-      + txt(W - M.r + 5, y + 3, g === 1 && cp ? `${+kwMax.toFixed(2)} kW` : `${+(g * kwMax).toFixed(2)}`, { a: "start", size: 10, fill: "var(--muted)", mono: true });
+      + txt(W - M.r + 5, y + 3, g === 1 ? rLabel : `${+(g * kwMax).toFixed(2)}`, { a: "start", size: 10, fill: "var(--muted)", mono: true });
     parts.push(g === 0.5 ? fade(q, html) : html);
   }
-  parts.push(fade(q, txt(M.l - 5, top - 5, "battery", { a: "end", size: 9.5, fill: "var(--muted)" }) + txt(W - M.r + 5, top - 5, "kW", { a: "start", size: 9.5, fill: "var(--muted)" })));
   // hours
   for (let t = Math.ceil(tl.from / HOUR_MS) * HOUR_MS; t <= tl.to; t += HOUR_MS) {
     const h = new Date(t).getHours();
@@ -801,16 +807,14 @@ function togglePlay() {
 }
 function showSpeed() {
   for (const b of document.querySelectorAll(".js-speed button")) b.classList.toggle("on", Number(b.dataset.speed) === speed);
-  for (const el of document.querySelectorAll(".js-speed-label")) el.textContent = `${speed}×`;
-  for (const m of document.querySelectorAll(".pill-menu")) m.hidden = true;
+  for (const m of document.querySelectorAll(".speed-menu")) m.hidden = true;
 }
-for (const el of document.querySelectorAll(".js-pill-play")) el.addEventListener("click", togglePlay);
-for (const el of document.querySelectorAll(".pill-speed")) el.addEventListener("click", (e) => {
-  e.stopPropagation();
-  const menu = el.parentElement.querySelector(".pill-menu");
-  menu.hidden = !menu.hidden;
-});
-document.addEventListener("click", (e) => { if (!e.target.closest(".pill-menu")) for (const m of document.querySelectorAll(".pill-menu")) m.hidden = true; });
+// Folded into the pill only the selected speed shows; tapping it (or ▾) opens the menu.
+const folded = () => Number(getComputedStyle($("tl-card").querySelector(".tl-bar")).getPropertyValue("--t")) > 0.5;
+function toggleSpeedMenu(e) { e.stopPropagation(); const m = $("tl-card").querySelector(".speed-menu"); m.hidden = !m.hidden; }
+$("tl-card").querySelector(".caret").addEventListener("click", toggleSpeedMenu);
+$("tl-card").querySelector(".seg.js-speed").addEventListener("click", (e) => { if (folded()) { e.stopImmediatePropagation(); toggleSpeedMenu(e); } }, true);
+document.addEventListener("click", (e) => { if (!e.target.closest(".speed-menu")) for (const m of document.querySelectorAll(".speed-menu")) m.hidden = true; });
 for (const el of document.querySelectorAll(".js-play")) el.addEventListener("click", togglePlay);
 for (const el of document.querySelectorAll(".js-speed")) el.addEventListener("click", (e) => {
   const b = e.target.closest("button[data-speed]");
@@ -839,27 +843,16 @@ function unpin(card) {
   card.classList.remove("pinned");
   for (const k of ["top", "left", "right", "borderRadius", "boxShadow", "paddingLeft", "paddingRight", "paddingBottom"]) card.style[k] = "";
   card.querySelector(".tl-foot").style.cssText = "";
-  const bar = card.querySelector(".tl-bar"), full = bar.querySelector(".tl-full"), pill = bar.querySelector(".tl-pill");
-  bar.style.cssText = ""; full.style.cssText = ""; pill.style.cssText = ""; pill.hidden = true;
-  barH = null;
+  card.querySelector(".tl-bar").style.removeProperty("--t");
 }
-let barH = null;   // the controls bar's height when the card pinned
-/* The controls fold into the pill over the middle of the shrink: the full row fades
-   out over its first half, the pill fades in over its second, and the bar's height
-   eases from full to 26 px in step, so nothing below it jumps. */
+/* The controls fold into the pill over the middle of the shrink (smoothstep), so
+   they start folding a little after the card pins and finish a little before it
+   reaches its compact height. */
 function morphBar(card, p) {
-  const bar = card.querySelector(".tl-bar"), full = bar.querySelector(".tl-full"), pill = bar.querySelector(".tl-pill");
-  if (barH == null) barH = bar.offsetHeight;
   const k = Math.max(0, Math.min(1, (p - 0.15) / 0.7)), t = k * k * (3 - 2 * k);
-  Object.assign(bar.style, { height: `${barH + (26 - barH) * t}px`, paddingTop: `${10 - 6 * t}px`, flexWrap: "nowrap" });
-  if (t < 0.5) {
-    full.style.display = ""; full.style.opacity = String(1 - t * 2); pill.hidden = true;
-  } else {
-    const u = (t - 0.5) * 2;
-    full.style.display = "none"; pill.hidden = false;
-    Object.assign(pill.style, { opacity: String(u), transform: `scale(${(0.92 + 0.08 * u).toFixed(3)})` });
-  }
+  card.querySelector(".tl-bar").style.setProperty("--t", t.toFixed(3));
 }
+
 function updatePin() {
   const hdr = document.querySelector("body > header").offsetHeight;
   const slot = $("tl-slot"), card = $("tl-card"), c = CHARTS[0], foot = card.querySelector(".tl-foot");
