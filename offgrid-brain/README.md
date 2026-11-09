@@ -21,6 +21,23 @@ in the simulator is the policy that executes.
 3. Start it. **It ships with `dry_run: true`**: it decides and logs, and touches
    nothing. Watch the log until you trust it, then turn `dry_run` off.
 
+## The panel
+
+The add-on adds **Off-Grid Brain** to the Home Assistant sidebar (Ingress, admin only):
+
+- **Live:** battery, load and solar with where each reading came from and how old
+  it is, then the dispatch list exactly as the last tick walked it. Each entry shows
+  its outcome (running, shed, not needed, deficit), how its power split between
+  solar and battery, and why. A gauge shows the battery against each charge rung's
+  floor, with the condition variables the tick saw underneath. Banners appear for
+  safe mode, deficits, expression errors and a stalled loop.
+- **Policy:** edit `policy.json` in place. **Check** validates the structure and
+  compiles every condition, then previews the candidate against the last tick's
+  readings: which devices would start or shed. **Apply** saves it (the previous
+  version is kept as `policy.json.bak`) and takes effect immediately, with no restart.
+
+The panel loads nothing from the internet, so it works when the site's connection is down.
+
 ## Configuration
 
 ### Where readings come from

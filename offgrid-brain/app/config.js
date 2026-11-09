@@ -9,6 +9,8 @@
 const fs = require("fs");
 const path = require("path");
 const log = require("./log.js");
+const Expr = require("./policy/expr.js");
+const { VARS } = require("./policy/dispatch.js");
 
 const OPTIONS_PATH = process.env.OPTIONS_PATH || "/data/options.json";
 const POLICY_PATH = process.env.POLICY_PATH || "/config/policy.json";
@@ -40,14 +42,37 @@ function loadPolicy() {
   }
 }
 
-/** Validate that every device referenced by the list actually exists. */
-function validate(policy, devicesOption) {
+/** Problems that make a policy unusable: bad shape, unknown devices, expressions
+    that don't compile. The web editor refuses to apply a policy with any of these. */
+function check(policy) {
+  if (!policy || typeof policy !== "object") return ["policy must be a JSON object"];
+  if (!Array.isArray(policy.devices)) return ['"devices" must be an array'];
+  if (!Array.isArray(policy.list)) return ['"list" must be an array'];
   const problems = [];
-  const ids = new Set(policy.devices.map((d) => d.id));
-  for (const [i, e] of policy.list.entries()) {
-    if (e.type === "load" && !ids.has(e.dev)) problems.push(`list[${i}] references unknown device "${e.dev}"`);
-    if (e.type === "charge" && !(e.to >= 0 && e.to <= 100)) problems.push(`list[${i}] charge rung "to" must be 0-100`);
+  const ids = new Set();
+  for (const [i, d] of policy.devices.entries()) {
+    if (!d || typeof d.id !== "string" || !d.id) { problems.push(`devices[${i}] needs a string "id"`); continue; }
+    if (ids.has(d.id)) problems.push(`devices[${i}] duplicate id "${d.id}"`);
+    ids.add(d.id);
+    if (!(typeof d.kw === "number" && d.kw >= 0)) problems.push(`device "${d.id}" needs "kw" >= 0`);
   }
+  for (const [i, e] of policy.list.entries()) {
+    if (!e || (e.type !== "load" && e.type !== "charge")) { problems.push(`list[${i}] "type" must be "load" or "charge"`); continue; }
+    if (e.type === "charge" && !(typeof e.to === "number" && e.to >= 0 && e.to <= 100)) problems.push(`list[${i}] charge rung "to" must be 0-100`);
+    if (e.type === "load") {
+      if (!ids.has(e.dev)) problems.push(`list[${i}] references unknown device "${e.dev}"`);
+      const c = Expr.compile(e.cond == null ? "0" : String(e.cond), VARS);
+      if (!c.ok) problems.push(`list[${i}] (${e.dev}) condition: ${c.error}`);
+    }
+  }
+  return problems;
+}
+
+/** check() plus warnings about the add-on's device options. */
+function validate(policy, devicesOption) {
+  const problems = check(policy);
+  if (problems.length) return problems;
+  const ids = new Set(policy.devices.map((d) => d.id));
   // Devices configured in add-on options but absent from the policy would never be dispatched.
   for (const d of devicesOption || []) {
     if (!ids.has(d.id)) problems.push(`configured device "${d.id}" has no entry in policy.json — it will never be dispatched`);
@@ -55,4 +80,4 @@ function validate(policy, devicesOption) {
   return problems;
 }
 
-module.exports = { loadOptions, loadPolicy, validate, POLICY_PATH, OPTIONS_PATH };
+module.exports = { loadOptions, loadPolicy, check, validate, POLICY_PATH, OPTIONS_PATH };

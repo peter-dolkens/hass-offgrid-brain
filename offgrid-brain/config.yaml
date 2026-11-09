@@ -1,6 +1,6 @@
 # Home Assistant add-on manifest. Installs into a supervised HAOS instance.
 name: Off-Grid Brain
-version: "0.2.0"
+version: "0.3.0"
 slug: offgrid_brain
 description: >-
   Load-shedding and dispatch brain for an off-grid solar + battery house. Walks
@@ -15,6 +15,12 @@ init: false
 # WebSocket + REST access to HA core (read states, call services).
 homeassistant_api: true
 hassio_api: true
+# Web UI in the HA sidebar: live view of each dispatch walk, and the policy editor.
+# Ingress means HA authenticates it (admin-only panel); no port is exposed.
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:solar-power-variant
+panel_title: Off-Grid Brain
 # Own config dir at /config — holds policy.json (the dispatch list).
 map:
   - addon_config:rw

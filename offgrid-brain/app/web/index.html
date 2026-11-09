@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Off-Grid Brain</title>
+<style>
+  /* Self-contained on purpose: no CDN, fonts or scripts from the internet, so the
+     panel works on a site whose internet is down. */
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1c2128; --muted: #5f6b7a; --line: #dde2e8;
+    --accent: #2f6fd6; --good: #1e8a4c; --good-bg: #e3f4ea; --bad: #c33a2c; --bad-bg: #fbe6e3;
+    --warn: #9a6200; --warn-bg: #fdf1d8; --idle: #77808c; --idle-bg: #eef0f3; --charge: #2f6fd6; --charge-bg: #e4edfb;
+    --pv: #e2a400; --batt: #7a5af5; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111418; --card: #1b2027; --text: #e6e9ee; --muted: #9aa5b3; --line: #2c333c;
+      --accent: #6ea0ff; --good: #5cd08e; --good-bg: #173326; --bad: #ff8a7d; --bad-bg: #3a1d1a;
+      --warn: #f2bd4b; --warn-bg: #362b12; --idle: #8d97a3; --idle-bg: #232a32; --charge: #7aa8ff; --charge-bg: #1c2a42;
+      --pv: #f2c14b; --batt: #a990ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 16px;
+           background: var(--card); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 650; }
+  .badge { font-size: 12px; font-weight: 650; padding: 2px 9px; border-radius: 999px; letter-spacing: .02em; }
+  .badge.dry { background: var(--warn-bg); color: var(--warn); }
+  .badge.live { background: var(--good-bg); color: var(--good); }
+  .muted { color: var(--muted); }
+  .spacer { flex: 1; }
+  nav button { background: none; border: 0; padding: 6px 12px; border-radius: 6px; color: var(--muted);
+               font: inherit; font-weight: 600; cursor: pointer; }
+  nav button.on { background: var(--idle-bg); color: var(--text); }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  .banner { padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; font-weight: 600; }
+  .banner.bad { background: var(--bad-bg); color: var(--bad); }
+  .banner.warn { background: var(--warn-bg); color: var(--warn); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .tile .label { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .tile .value { font-size: 24px; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .tile .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 14px; overflow: hidden; }
+  .card h2 { font-size: 14px; margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--line); font-weight: 650;
+             display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .card h2 .muted { font-weight: 400; font-size: 12px; }
+  /* SoC gauge with the charge rungs as floors */
+  .gauge { padding: 18px 14px 26px; }
+  .bar { position: relative; height: 18px; border-radius: 9px; background: var(--idle-bg); }
+  .bar .fill { position: absolute; inset: 0 auto 0 0; border-radius: 9px; background: var(--good); opacity: .85; }
+  .bar .rung { position: absolute; top: -5px; bottom: -5px; width: 2px; background: var(--charge); }
+  .bar .rung span { position: absolute; top: 26px; transform: translateX(-50%); font-size: 11px; color: var(--charge); white-space: nowrap; }
+  .bar .reserve { background: var(--bad); }
+  .bar .reserve span { color: var(--bad); }
+  /* The dispatch list */
+  .row { display: grid; grid-template-columns: 34px 1fr auto; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--line); align-items: start; }
+  .row:first-child { border-top: 0; }
+  .row .idx { color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 1px; }
+  .row .name { font-weight: 600; }
+  .row .cond { font-family: var(--mono); font-size: 12px; color: var(--muted); word-break: break-word; }
+  .row .why { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .row.charge { background: var(--charge-bg); }
+  .row.charge .name { color: var(--charge); }
+  .chip { font-size: 12px; font-weight: 650; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+  .chip.granted, .chip.full { background: var(--good-bg); color: var(--good); }
+  .chip.shed { background: var(--bad-bg); color: var(--bad); }
+  .chip.deficit, .chip.partial { background: var(--warn-bg); color: var(--warn); }
+  .chip.idle, .chip.already-served, .chip.unknown-device, .chip.ignored { background: var(--idle-bg); color: var(--idle); }
+  .chip.charging { background: var(--charge-bg); color: var(--charge); }
+  .chip.gen { background: var(--idle-bg); color: var(--muted); margin-left: 6px; font-weight: 600; }
+  .split { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--idle-bg); margin-top: 6px; max-width: 280px; }
+  .split .pv { background: var(--pv); } .split .batt { background: var(--batt); } .split .short { background: var(--bad); }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .vars { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
+  .vars span { font-family: var(--mono); font-size: 12px; background: var(--idle-bg); padding: 3px 8px; border-radius: 6px; }
+  /* Policy editor */
+  textarea { width: 100%; min-height: 460px; border: 0; padding: 14px; resize: vertical; background: var(--card); color: var(--text);
+             font: 13px/1.5 var(--mono); outline: none; tab-size: 2; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 10px 14px; border-top: 1px solid var(--line); }
+  .btn { font: inherit; font-weight: 600; padding: 7px 14px; border-radius: 7px; border: 1px solid var(--line);
+         background: var(--card); color: var(--text); cursor: pointer; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .problems { margin: 0; padding: 10px 14px 10px 32px; color: var(--bad); }
+  .changes { padding: 6px 14px 12px; }
+  .changes div { padding: 3px 0; }
+  .empty { padding: 14px; color: var(--muted); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Off-Grid Brain</h1>
+  <span id="mode" class="badge"></span>
+  <span id="ver" class="muted"></span>
+  <span class="spacer"></span>
+  <span id="age" class="muted"></span>
+  <nav><button data-tab="live" class="on">Live</button><button data-tab="policy">Policy</button></nav>
+</header>
+
+<main>
+  <section id="tab-live">
+    <div id="banners"></div>
+    <div class="tiles" id="tiles"></div>
+    <div class="card">
+      <h2>Battery and floors <span class="muted">Charge rungs fill the battery to their level and stop anything below them discharging past it.</span></h2>
+      <div class="gauge"><div class="bar" id="bar"></div></div>
+    </div>
+    <div class="card">
+      <h2>Dispatch list
+        <span class="muted">Walked top to bottom each tick: solar first, then battery down to each entry's floor.</span>
+        <span class="spacer"></span>
+        <span class="legend"><span><i style="background:var(--pv)"></i>solar</span><span><i style="background:var(--batt)"></i>battery</span><span><i style="background:var(--bad)"></i>short</span></span>
+      </h2>
+      <div id="list"><div class="empty">Waiting for the first tick…</div></div>
+    </div>
+    <div class="card">
+      <h2>Context <span class="muted">The variables the list's conditions saw on this tick.</span></h2>
+      <div class="vars" id="vars"></div>
+    </div>
+  </section>
+
+  <section id="tab-policy" hidden>
+    <div class="card">
+      <h2>policy.json <span class="muted" id="ppath"></span></h2>
+      <textarea id="editor" spellcheck="false"></textarea>
+      <div class="actions">
+        <button class="btn" id="btn-format">Format</button>
+        <button class="btn" id="btn-check">Check</button>
+        <button class="btn primary" id="btn-apply" disabled>Apply</button>
+        <button class="btn" id="btn-revert">Revert</button>
+        <span class="spacer"></span>
+        <span id="pstatus" class="muted"></span>
+      </div>
+      <ul class="problems" id="problems" hidden></ul>
+      <div id="preview" hidden>
+        <h2>If applied now <span class="muted">Against the last tick's readings.</span></h2>
+        <div class="changes" id="changes"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = (v, d = 1) => (v == null || Number.isNaN(v) ? "—" : Number(v).toFixed(d));
+const watts = (kw) => (kw == null ? "—" : Math.abs(kw) < 1 ? `${Math.round(kw * 1000)} W` : `${kw.toFixed(2)} kW`);
+const ago = (sec) => (sec == null ? "no reading" : sec < 90 ? `${Math.round(sec)} s old` : `${Math.round(sec / 60)} min old`);
+
+let state = null;
+
+// ---------- live view ----------
+const OUTCOME = {
+  granted: "running", shed: "shed", deficit: "deficit", partial: "lower level", idle: "not needed",
+  "already-served": "already served", charging: "charging", full: "reached", "unknown-device": "unknown device",
+  ignored: "ignored",
+};
+
+function why(t) {
+  if (t.type === "charge") {
+    return t.outcome === "charging"
+      ? `Battery below ${t.to}%: charging at ${watts(t.chargeKw)}. Floor for entries below is now ${t.floorPct}%.`
+      : `Battery at or above ${t.to}%. Floor for entries below is now ${t.floorPct}%.`;
+  }
+  switch (t.outcome) {
+    case "idle": return "Its condition is 0 right now, so it isn't asking to run.";
+    case "already-served": return "An earlier entry already gave it this much.";
+    case "granted": return `Granted ${watts(t.incKw)}: ${watts(t.fromPvKw)} solar + ${watts(t.fromBattKw)} battery.`;
+    case "partial": return `This deeper service level wasn't reached (short ${watts(t.shortKw)}); it runs at a lower level.`;
+    case "shed": return `Short ${watts(t.shortKw)}. The battery can't go below this entry's ${t.floorPct}% floor.`;
+    case "deficit": return `Short ${watts(t.shortKw)}, but it can't be shed (gen-backed), so it keeps running.`;
+    case "unknown-device": return "This entry names a device that isn't in the policy.";
+    default: return "";
+  }
+}
+
+function renderRow(t) {
+  if (t.type === "charge") {
+    return `<div class="row charge"><div class="idx">${t.i}</div>
+      <div><div class="name">Charge to ${t.to}%</div><div class="why">${esc(why(t))}</div></div>
+      <div><span class="chip ${t.outcome}">${OUTCOME[t.outcome] || t.outcome}</span></div></div>`;
+  }
+  const total = Math.max(t.incKw || 0, 1e-9);
+  const bar = t.incKw ? `<div class="split">
+      <div class="pv" style="width:${(100 * (t.fromPvKw || 0)) / total}%"></div>
+      <div class="batt" style="width:${(100 * (t.fromBattKw || 0)) / total}%"></div>
+      <div class="short" style="width:${(100 * Math.max(0, t.shortKw || 0)) / total}%"></div></div>` : "";
+  const level = t.f != null && t.f < 1 && t.f > 0 ? ` <span class="muted">at ${Math.round(t.f * 100)}%</span>` : "";
+  return `<div class="row"><div class="idx">${t.i}</div>
+    <div><div class="name">${esc(t.name || t.dev)}${level}${t.gen ? '<span class="chip gen">can\'t shed</span>' : ""}</div>
+      ${t.cond != null && t.cond !== "1" ? `<div class="cond">${esc(t.cond)}</div>` : ""}
+      <div class="why">${esc(why(t))}</div>${bar}</div>
+    <div><span class="chip ${t.outcome}">${OUTCOME[t.outcome] || t.outcome}</span></div></div>`;
+}
+
+function renderLive() {
+  const s = state;
+  $("mode").className = `badge ${s.dryRun ? "dry" : "live"}`;
+  $("mode").textContent = s.dryRun ? "DRY RUN" : "LIVE CONTROL";
+  $("ver").textContent = s.version ? `v${s.version}` : "";
+  if (s.starting) return;
+
+  const tickAge = (Date.now() - Date.parse(s.time)) / 1000;
+  $("age").textContent = `updated ${ago(tickAge).replace(" old", " ago")}`;
+
+  const banners = [];
+  if (s.safeMode) banners.push(`<div class="banner bad">Safe mode: no fresh battery reading, so the brain assumes the ${s.battery.reserve_pct}% reserve and sheds everything discretionary.</div>`);
+  if (s.result.deficitKw > 0) banners.push(`<div class="banner warn">Deficit ${watts(s.result.deficitKw)}: loads that can't be shed need more than solar and battery can supply.</div>`);
+  if (s.result.errors.length) banners.push(`<div class="banner warn">Policy expression errors: ${esc(s.result.errors.join("; "))}</div>`);
+  if (tickAge > 3 * s.tickSec) banners.push(`<div class="banner warn">No tick for ${Math.round(tickAge)} s.</div>`);
+  $("banners").innerHTML = banners.join("");
+
+  const i = s.inputs;
+  const src = (r) => `${r.from || "none"} · ${ago(r.ageSec)}`;
+  const running = s.result.decisions.filter((d) => d.run).length;
+  const tiles = [
+    ["Battery", `${fmt(i.soc.value)}%`, src(i.soc)],
+    ["Load", watts(i.loadKw.value), src(i.loadKw)],
+    ["Solar", watts(i.pvKw.value), src(i.pvKw)],
+    ["Autonomy", `${fmt(s.ctx.autonomy, 2)} d`, "usable battery ÷ worst expected daily deficit"],
+    ["Charging", watts(s.result.chargeKw), `spare solar after the list: ${watts(s.result.budgetKw)}`],
+    ["Devices", `${running} / ${s.result.decisions.length}`, `running · ${s.result.decisions.length - running} shed`],
+  ];
+  $("tiles").innerHTML = tiles.map(([l, v, sub]) =>
+    `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div><div class="sub">${esc(sub)}</div></div>`).join("");
+
+  const soc = Number.isFinite(i.soc.value) ? i.soc.value : null;
+  const rungs = s.result.trace.filter((t) => t.type === "charge").map((t) => t.to);
+  $("bar").innerHTML = `<div class="fill" style="width:${soc == null ? 0 : soc}%"></div>
+    <div class="rung reserve" style="left:${s.battery.reserve_pct}%"><span>reserve ${s.battery.reserve_pct}%</span></div>
+    ${[...new Set(rungs)].filter((r) => r !== s.battery.reserve_pct && r < 100)
+      .map((r) => `<div class="rung" style="left:${r}%"><span>${r}%</span></div>`).join("")}`;
+
+  $("list").innerHTML = s.result.trace.length ? s.result.trace.map(renderRow).join("") : '<div class="empty">The list is empty.</div>';
+  $("vars").innerHTML = Object.entries(s.ctx).map(([k, v]) =>
+    `<span>${k}=${typeof v === "number" ? (Number.isInteger(v) ? v : v.toFixed(2)) : esc(v)}</span>`).join("");
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("api/state", { cache: "no-store" });
+    state = await r.json();
+    renderLive();
+  } catch (e) {
+    $("age").textContent = `can't reach the add-on: ${e.message}`;
+  }
+}
+
+// ---------- policy editor ----------
+let saved = "";
+let checkedText = null;
+
+function setStatus(text, cls = "muted") { $("pstatus").className = cls; $("pstatus").textContent = text; }
+
+function parseEditor() {
+  try { return { policy: JSON.parse($("editor").value) }; }
+  catch (e) { return { error: `Not valid JSON: ${e.message}` }; }
+}
+
+async function loadPolicy() {
+  const r = await (await fetch("api/policy", { cache: "no-store" })).json();
+  saved = JSON.stringify(r.policy, null, 2);
+  $("editor").value = saved;
+  $("ppath").textContent = r.path;
+  checkedText = null;
+  $("btn-apply").disabled = true;
+  $("problems").hidden = true; $("preview").hidden = true;
+  setStatus("Matches the policy in force.");
+}
+
+function showProblems(list) {
+  $("problems").innerHTML = list.map((p) => `<li>${esc(p)}</li>`).join("");
+  $("problems").hidden = !list.length;
+}
+
+function showPreview(preview) {
+  if (!preview || !state || state.starting) { $("preview").hidden = true; return; }
+  const before = Object.fromEntries(state.result.decisions.map((d) => [d.id, d]));
+  const after = Object.fromEntries(preview.decisions.map((d) => [d.id, d]));
+  const ids = [...new Set([...Object.keys(before), ...Object.keys(after)])];
+  const word = (d) => (!d ? "not in the list" : d.unbacked ? "deficit" : d.run ? `running ${watts(d.kw)}` : "shed");
+  const lines = ids.map((id) => {
+    const a = before[id], b = after[id];
+    const changed = word(a) !== word(b);
+    return `<div>${changed ? "<b>" : '<span class="muted">'}${esc((b || a).name)}: ${word(a)} → ${word(b)}${changed ? "</b>" : "</span>"}</div>`;
+  });
+  if (preview.floorPct !== state.result.floorPct) lines.push(`<div><b>Deepest floor: ${state.result.floorPct}% → ${preview.floorPct}%</b></div>`);
+  if (preview.errors.length) lines.push(`<div style="color:var(--bad)">Expression errors: ${esc(preview.errors.join("; "))}</div>`);
+  $("changes").innerHTML = lines.join("") || '<div class="muted">No devices.</div>';
+  $("preview").hidden = false;
+}
+
+async function check() {
+  const p = parseEditor();
+  if (p.error) { showProblems([p.error]); $("preview").hidden = true; $("btn-apply").disabled = true; setStatus("Fix the JSON first.", ""); return; }
+  const r = await (await fetch("api/policy/check", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p.policy),
+  })).json();
+  showProblems(r.problems || []);
+  showPreview(r.preview);
+  const ok = !(r.problems || []).length;
+  checkedText = ok ? $("editor").value : null;
+  $("btn-apply").disabled = !ok;
+  setStatus(ok ? "Valid. Review the preview, then Apply." : `${r.problems.length} problem(s).`, ok ? "muted" : "");
+}
+
+async function apply() {
+  if ($("editor").value !== checkedText) { await check(); if ($("btn-apply").disabled) return; }
+  const p = parseEditor();
+  const r = await fetch("api/policy", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(p.policy),
+  });
+  const body = await r.json();
+  if (!r.ok) { showProblems(body.problems || [body.error]); setStatus("Not applied.", ""); return; }
+  setStatus("Applied and saved. The previous version is kept as policy.json.bak.");
+  saved = JSON.stringify(p.policy, null, 2);
+  $("btn-apply").disabled = true;
+  setTimeout(refresh, 800);
+}
+
+$("editor").addEventListener("input", () => {
+  $("btn-apply").disabled = true;
+  setStatus($("editor").value === saved ? "Matches the policy in force." : "Unsaved changes. Check before applying.");
+});
+$("editor").addEventListener("keydown", (e) => {
+  if (e.key !== "Tab") return;
+  e.preventDefault();
+  const t = e.target, at = t.selectionStart;
+  t.setRangeText("  ", at, t.selectionEnd, "end");
+  t.dispatchEvent(new Event("input"));
+});
+$("btn-format").onclick = () => {
+  const p = parseEditor();
+  if (p.error) { showProblems([p.error]); return; }
+  $("editor").value = JSON.stringify(p.policy, null, 2);
+  $("editor").dispatchEvent(new Event("input"));
+};
+$("btn-check").onclick = check;
+$("btn-apply").onclick = apply;
+$("btn-revert").onclick = () => { if ($("editor").value === saved || confirm("Discard your changes?")) loadPolicy(); };
+
+// ---------- tabs ----------
+for (const b of document.querySelectorAll("nav button")) {
+  b.onclick = () => {
+    for (const o of document.querySelectorAll("nav button")) o.classList.toggle("on", o === b);
+    $("tab-live").hidden = b.dataset.tab !== "live";
+    $("tab-policy").hidden = b.dataset.tab !== "policy";
+    if (b.dataset.tab === "policy" && !$("editor").value) loadPolicy();
+  };
+}
+
+refresh();
+setInterval(() => { if (!$("tab-live").hidden) refresh(); }, 5000);
+</script>
+</body>
+</html>

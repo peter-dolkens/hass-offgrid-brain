@@ -11,7 +11,7 @@
 "use strict";
 const fs = require("fs");
 const log = require("./log.js");
-const { loadOptions, loadPolicy, validate, POLICY_PATH } = require("./config.js");
+const { loadOptions, loadPolicy, check, validate, POLICY_PATH } = require("./config.js");
 const { HAClient } = require("./sources/ha.js");
 const { FroniusPoller } = require("./sources/fronius.js");
 const { SplinkPoller } = require("./sources/splink.js");
@@ -20,6 +20,8 @@ const { Actuator } = require("./sinks/actuator.js");
 const { MqttSink } = require("./sinks/mqtt.js");
 const { decide } = require("./policy/dispatch.js");
 const { buildContext, LoadHistory } = require("./policy/context.js");
+const { startServer } = require("./web/server.js");
+const VERSION = require("./package.json").version;
 
 const STATE_PATH = "/data/brain-state.json";
 
@@ -44,12 +46,12 @@ async function main() {
   const devices = opt.devices || [];
 
   log.info("=".repeat(64));
-  log.info(`Off-Grid Brain ${require("./package.json").version} — ${dryRun ? "DRY RUN (actuating nothing)" : "LIVE CONTROL"}`);
+  log.info(`Off-Grid Brain ${VERSION} — ${dryRun ? "DRY RUN (actuating nothing)" : "LIVE CONTROL"}`);
   log.info(`battery ${battery.capacity_kwh} kWh / ${battery.inverter_kw} kW, reserve ${battery.reserve_pct}%`);
 
-  const policy = loadPolicy();
-  const problems = validate(policy, devices);
-  for (const p of problems) log.warn(`policy: ${p}`);
+  let policy = loadPolicy();
+  for (const p of validate(policy, devices)) log.warn(`policy: ${p}`);
+  const limits = { ...battery, tick_hours: tickSec / 3600 };
 
   // ---- sources -------------------------------------------------------------
   const ha = new HAClient({ token: process.env.SUPERVISOR_TOKEN });
@@ -88,7 +90,38 @@ async function main() {
   const saved = loadState();
   const history = LoadHistory.fromJSON(saved.history, au.window_days, au.seed_load_kwh);
 
+  // ---- web UI (ingress) ----------------------------------------------------
+  // What the UI shows is exactly what the last tick decided, plus the context it
+  // decided in, so a candidate policy can be previewed against the same moment.
+  let snapshot = { starting: true, version: VERSION, dryRun };
+  let lastCtx = null;
+  const summarise = (r) => ({
+    trace: r.trace, decisions: r.decisions, floorPct: r.floorPct, chargeKw: r.charge,
+    deficitKw: r.deficitKw, budgetKw: r.budget, errors: r.errors,
+  });
+  startServer({
+    port: Number(process.env.INGRESS_PORT) || 8099,
+    allowAny: process.env.BRAIN_UI_ALLOW_ANY === "1",
+    policyPath: POLICY_PATH,
+    getState: () => snapshot,
+    getPolicy: () => policy,
+    check,
+    preview: (p) => (lastCtx ? summarise(decide(p, lastCtx, limits)) : null),
+    apply: (p) => {
+      policy = p;
+      for (const w of validate(policy, devices)) log.warn(`policy: ${w}`);
+      runTick();   // show the new policy's decisions straight away
+    },
+  });
+
   // ---- tick ----------------------------------------------------------------
+  let ticking = false;
+  function runTick() {
+    if (ticking) return;
+    ticking = true;
+    tick().catch((e) => log.error("tick failed", e.stack || e.message)).finally(() => { ticking = false; });
+  }
+
   async function tick() {
     const now = new Date();
 
@@ -127,7 +160,7 @@ async function main() {
       battery,
     });
 
-    const result = decide(policy, ctx, { ...battery, tick_hours: tickSec / 3600 });
+    const result = decide(policy, ctx, limits);
     for (const e of result.errors) log.error(`policy expression: ${e}`);
 
     log.info(
@@ -145,13 +178,23 @@ async function main() {
       log.warn(`DEFICIT ${result.deficitKw.toFixed(3)} kW — unsheddable loads [${result.unbacked.map((d) => d.id).join(",")}] exceed what solar and battery can supply`);
     }
 
+    lastCtx = ctx;
+    snapshot = {
+      time: now.toISOString(), version: VERSION, dryRun, safeMode, tickSec, battery,
+      inputs: { soc: socEnt, loadKw: loadEnt, pvKw: pvEnt },
+      splinkSource: splinkCfg.enabled ? splink.source : null,
+      ctx,
+      result: summarise(result),
+      devices: devices.map((d) => ({ id: d.id, name: d.name, switch: d.switch || null })),
+    };
+
     await actuator.apply(result.decisions);
     mqttSink.publishTick({ ctx, result, safeMode });
     saveState({ history: history.toJSON(), updated: now.toISOString() });
   }
 
-  setInterval(() => tick().catch((e) => log.error("tick failed", e.stack || e.message)), tickSec * 1000);
-  setTimeout(() => tick().catch((e) => log.error("first tick failed", e.stack || e.message)), 3000);
+  setInterval(runTick, tickSec * 1000);
+  setTimeout(runTick, 3000);
 
   process.on("SIGTERM", () => { log.info("shutting down"); saveState({ history: history.toJSON() }); process.exit(0); });
 }

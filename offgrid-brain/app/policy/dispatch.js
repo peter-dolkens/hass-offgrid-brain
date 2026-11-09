@@ -43,7 +43,7 @@ const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
    policy  : { devices: [...], list: [...] }
    ctx     : runtime variables (see VARS) — soc is PERCENT, pv/surplus are kW
    limits  : { inverter_kw, max_charge_kw, reserve_pct }
-   Returns : { decisions, charge, shed, budget, floorPct, errors }
+   Returns : { decisions, charge, shed, budget, floorPct, errors, trace }
 
    `decisions` carries one row per device with `run` (bool), the service level
    reached, and the REASON — which is what makes the add-on auditable rather
@@ -62,11 +62,14 @@ function decide(policy, ctx, limits) {
   const result = {};      // device id -> decision row
   let chargeKw = 0;
   let deficitKw = 0;      // gen-backed demand that solar+battery could not cover
+  // One row per list entry, for display only: what the walk did at each depth.
+  const trace = [];
 
   for (let i = 0; i < policy.list.length; i++) {
     const e = policy.list[i];
 
     if (e.type === "charge") {
+      let ch = 0;
       if (soc < e.to) {
         // Mirrors sim.js's three-way cap: available power, the charger's ceiling, and
         // the headroom still left to the target. Without the third term a bank sitting
@@ -74,24 +77,28 @@ function decide(policy, ctx, limits) {
         // below it, when a few watts would do.
         const headroomKwh = ((e.to - soc) / 100) * limits.capacity_kwh;
         const headroomKw = headroomKwh / (limits.tick_hours || 1 / 120);
-        const ch = Math.max(0, Math.min(budgetKw, limits.max_charge_kw, headroomKw));
+        ch = Math.max(0, Math.min(budgetKw, limits.max_charge_kw, headroomKw));
         chargeKw += ch;
         budgetKw -= ch;                              // charging competes with loads below
       }
       if (e.to > floorPct) floorPct = e.to;          // becomes the floor for everything below
+      trace.push({ i, type: "charge", to: e.to, chargeKw: ch, floorPct,
+                   outcome: soc < e.to ? "charging" : "full" });
       continue;
     }
-    if (e.type !== "load") continue;
+    if (e.type !== "load") { trace.push({ i, type: e.type, outcome: "ignored" }); continue; }
 
     const d = dev[e.dev];
-    if (!d) continue;
+    if (!d) { trace.push({ i, type: "load", dev: e.dev, outcome: "unknown-device" }); continue; }
 
     const f = clamp01(C.fn(e.cond, d.name || e.dev)({ ...ctx, surplus: budgetKw, used: ctx.used || 0 }));
-    if (f <= 1e-9) continue;                          // rule says not now — not a shed
+    const row = { i, type: "load", dev: e.dev, name: d.name || e.dev, cond: e.cond, f,
+                  gen: !!e.gen, floorPct, surplusKw: budgetKw };
+    if (f <= 1e-9) { trace.push({ ...row, outcome: "idle" }); continue; }   // rule says not now — not a shed
 
     const demand = (d.kw || 0) * f;
     const inc = demand - (served[e.dev] || 0);        // top-up to this service level
-    if (inc <= 1e-9) continue;
+    if (inc <= 1e-9) { trace.push({ ...row, demandKw: demand, outcome: "already-served" }); continue; }
 
     const fromPv = Math.min(inc, budgetKw);
     budgetKw -= fromPv;
@@ -118,6 +125,8 @@ function decide(policy, ctx, limits) {
     if (unbacked) deficitKw += rem;
 
     const prev = result[e.dev];
+    trace.push({ ...row, demandKw: demand, incKw: inc, fromPvKw: fromPv, fromBattKw: fromBatt, shortKw: rem,
+                 outcome: ok ? "granted" : unbacked ? "deficit" : (prev && prev.run) ? "partial" : "shed" });
     // A device RUNS if any entry granted it power. Deeper entries only improve service.
     result[e.dev] = {
       id: e.dev,
@@ -148,6 +157,7 @@ function decide(policy, ctx, limits) {
     budget: budgetKw,
     floorPct,
     errors: C.errors,
+    trace,
   };
 }
 
