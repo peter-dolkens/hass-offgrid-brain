@@ -1,6 +1,6 @@
 # Home Assistant add-on manifest. Installs into a supervised HAOS instance.
 name: Off-Grid Brain
-version: "0.3.0"
+version: "0.4.0"
 slug: offgrid_brain
 description: >-
   Load-shedding and dispatch brain for an off-grid solar + battery house. Walks
@@ -60,6 +60,10 @@ options:
   mqtt:
     enabled: false
     discovery_prefix: homeassistant
+    host: ""
+    port: 1883
+    username: ""
+    password: ""
   devices: []
 
 schema:
@@ -98,9 +102,15 @@ schema:
       - str
     poll_seconds: int(5,300)
     publish_to_ha: bool
+  # Publishes the brain's state as an "Off-Grid Brain" device via MQTT discovery.
+  # Leave host blank to use the Mosquitto add-on's own credentials.
   mqtt:
     enabled: bool
     discovery_prefix: str
+    host: str?
+    port: port?
+    username: str?
+    password: password?
   # Controllable loads. `id` must match a device id used in policy.json.
   devices:
     - id: str

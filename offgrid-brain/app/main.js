@@ -17,7 +17,7 @@ const { FroniusPoller } = require("./sources/fronius.js");
 const { SplinkPoller } = require("./sources/splink.js");
 const { pick, STALE_SEC } = require("./sources/pick.js");
 const { Actuator } = require("./sinks/actuator.js");
-const { MqttSink } = require("./sinks/mqtt.js");
+const { MqttSink, resolveBroker } = require("./sinks/mqtt.js");
 const { decide } = require("./policy/dispatch.js");
 const { buildContext, LoadHistory } = require("./policy/context.js");
 const { startServer } = require("./web/server.js");
@@ -73,13 +73,11 @@ async function main() {
   });
   if (splinkCfg.enabled) splink.start();
 
+  const mqttCfg = opt.mqtt || {};
   const mqttSink = new MqttSink({
-    enabled: (opt.mqtt || {}).enabled,
-    discoveryPrefix: (opt.mqtt || {}).discovery_prefix,
-    broker: {
-      host: process.env.MQTT_HOST, port: process.env.MQTT_PORT,
-      username: process.env.MQTT_USER, password: process.env.MQTT_PASSWORD,
-    },
+    enabled: mqttCfg.enabled,
+    discoveryPrefix: mqttCfg.discovery_prefix,
+    broker: mqttCfg.enabled ? await resolveBroker(mqttCfg, process.env.SUPERVISOR_TOKEN) : null,
   });
   mqttSink.connect();
 
@@ -189,7 +187,7 @@ async function main() {
     };
 
     await actuator.apply(result.decisions);
-    mqttSink.publishTick({ ctx, result, safeMode });
+    mqttSink.publishTick({ ctx, result, safeMode, dryRun, inputs: snapshot.inputs });
     saveState({ history: history.toJSON(), updated: now.toISOString() });
   }
 

@@ -135,8 +135,20 @@ Known GEN24 limitations:
 
 ### `mqtt`: optional bridge
 
-Publishes the brain's own state as HA entities via discovery: autonomy, SoC as it
-sees it, PV, shed count, deficit and safe mode. Needs the Mosquitto add-on.
+Publishes the brain's state as an **Off-Grid Brain** device via MQTT discovery:
+battery SoC (the real reading, even in safe mode), load, solar, charging and
+deficit power, autonomy, the deepest floor, the number and list of loads shed,
+and `safe_mode` / `dry_run` binary sensors. The numeric sensors keep long-term
+statistics.
+
+```yaml
+mqtt:
+  enabled: true
+  host: core-mosquitto      # blank = use the Mosquitto add-on's own credentials
+  port: 1883
+  username: offgrid-brain
+  password: "..."
+```
 
 ## The policy file
 

@@ -1,8 +1,6 @@
 /* Optional MQTT bridge — publishes the brain's own state back into HA via
-   discovery, and (when fronius.publish_to_ha is on) the directly-polled PV
-   figures too. An add-on cannot create native entities, so discovery is the
-   supported route. Entirely optional: if you run the Fronius HA integration
-   instead, leave this off and point `sources` at its entities. */
+   discovery, as one "Off-Grid Brain" device. An add-on cannot create native
+   entities, so discovery is the supported route. Entirely optional. */
 "use strict";
 const log = require("../log.js");
 
@@ -23,6 +21,26 @@ const DEVICE = {
   manufacturer: "Off-Grid Brain",
   model: "Dispatch controller",
 };
+const STATUS = "offgrid_brain/status";
+
+/** Broker from explicit options, else the Supervisor's MQTT service (the
+    Mosquitto add-on's own credentials). Returns null when neither is available. */
+async function resolveBroker(opt, supervisorToken) {
+  if (opt && opt.host) {
+    return { host: opt.host, port: opt.port || 1883, username: opt.username || undefined,
+             password: opt.password || undefined, source: "options" };
+  }
+  if (!supervisorToken) return null;
+  try {
+    const r = await fetch("http://supervisor/services/mqtt", { headers: { Authorization: `Bearer ${supervisorToken}` } });
+    if (!r.ok) return null;
+    const d = (await r.json()).data;
+    return d && d.host ? { host: d.host, port: d.port, username: d.username, password: d.password, source: "supervisor" } : null;
+  } catch { return null; }
+}
+
+/* Numbers HA can't parse would log an error per update; "None" reads as unknown. */
+const num = (v, digits) => (Number.isFinite(v) ? v.toFixed(digits) : "None");
 
 class MqttSink {
   constructor({ enabled, discoveryPrefix, broker }) {
@@ -36,56 +54,70 @@ class MqttSink {
   connect() {
     if (!this.enabled) return;
     if (!this.broker || !this.broker.host) {
-      log.warn("mqtt enabled but no broker available — is the Mosquitto add-on installed?");
+      log.warn("mqtt enabled but no broker: set mqtt.host or install the Mosquitto add-on");
       this.enabled = false;
       return;
     }
     const mqtt = loadMqtt();
     if (!mqtt) { this.enabled = false; return; }
     const url = `mqtt://${this.broker.host}:${this.broker.port || 1883}`;
-    log.info(`connecting to MQTT at ${url}`);
+    log.info(`connecting to MQTT at ${url} as ${this.broker.username || "(anonymous)"} (${this.broker.source})`);
     this.client = mqtt.connect(url, {
       username: this.broker.username,
       password: this.broker.password,
-      will: { topic: "offgrid_brain/status", payload: "offline", retain: true },
+      will: { topic: STATUS, payload: "offline", retain: true },
     });
     this.client.on("connect", () => {
       log.info("MQTT connected");
-      this.client.publish("offgrid_brain/status", "online", { retain: true });
+      this.announced.clear();   // re-announce after a reconnect (the broker may have restarted)
+      this.client.publish(STATUS, "online", { retain: true });
     });
     this.client.on("error", (e) => log.warn("MQTT error", e.message));
   }
 
-  _announce(key, cfg) {
-    if (this.announced.has(key)) return;
-    const topic = `${this.prefix}/sensor/offgrid_brain/${key}/config`;
-    this.client.publish(topic, JSON.stringify({
+  _announce(component, key, cfg) {
+    const id = `${component}/${key}`;
+    if (this.announced.has(id)) return;
+    this.client.publish(`${this.prefix}/${component}/offgrid_brain/${key}/config`, JSON.stringify({
       ...cfg,
       unique_id: `offgrid_brain_${key}`,
+      default_entity_id: `${component}.offgrid_brain_${key}`,
+      has_entity_name: true,
       state_topic: `offgrid_brain/${key}`,
-      availability_topic: "offgrid_brain/status",
+      availability_topic: STATUS,
       device: DEVICE,
     }), { retain: true });
-    this.announced.add(key);
+    this.announced.add(id);
   }
 
-  publishSensor(key, value, cfg = {}) {
+  publish(component, key, value, cfg) {
     if (!this.enabled || !this.client || !this.client.connected) return;
-    this._announce(key, { name: cfg.name || key, ...cfg });
+    this._announce(component, key, cfg);
     this.client.publish(`offgrid_brain/${key}`, String(value), { retain: true });
   }
 
-  /** Publish one tick's summary: the numbers you would want on a dashboard. */
-  publishTick({ ctx, result, safeMode }) {
+  /** One tick's summary: the numbers you would want on a dashboard. */
+  publishTick({ ctx, result, safeMode, dryRun, inputs }) {
     if (!this.enabled) return;
-    this.publishSensor("autonomy", ctx.autonomy.toFixed(2), { name: "Autonomy", unit_of_measurement: "d", icon: "mdi:battery-clock" });
-    this.publishSensor("soc", Number.isFinite(ctx.soc) ? ctx.soc.toFixed(1) : "unknown", { name: "Battery SoC (brain view)", unit_of_measurement: "%", device_class: "battery" });
-    this.publishSensor("pv_power", Number.isFinite(ctx.pv) ? (ctx.pv * 1000).toFixed(0) : "unknown", { name: "PV power", unit_of_measurement: "W", device_class: "power" });
-    this.publishSensor("shed_count", result.shed.length, { name: "Loads shed", icon: "mdi:flash-off" });
-    this.publishSensor("safe_mode", safeMode ? "ON" : "OFF", { name: "Safe mode", icon: "mdi:shield-alert" });
-    this.publishSensor("shed_detail", JSON.stringify(result.shed.map((s) => s.id)).slice(0, 255), { name: "Shed loads" });
-    this.publishSensor("deficit_power", (result.deficitKw * 1000).toFixed(0), { name: "Deficit", unit_of_measurement: "W", device_class: "power", icon: "mdi:alert" });
+    const power = { unit_of_measurement: "W", device_class: "power", state_class: "measurement" };
+    // The REAL reading, not the reserve value safe mode substitutes for decisions.
+    this.publish("sensor", "soc", num(inputs.soc.value, 1),
+      { name: "Battery SoC", unit_of_measurement: "%", device_class: "battery", state_class: "measurement" });
+    this.publish("sensor", "load_power", num(inputs.loadKw.value * 1000, 0), { name: "Load", ...power });
+    this.publish("sensor", "pv_power", num(ctx.pv * 1000, 0), { name: "Solar", ...power });
+    this.publish("sensor", "charge_power", num(result.charge * 1000, 0), { name: "Charging", ...power, icon: "mdi:battery-charging" });
+    this.publish("sensor", "deficit_power", num(result.deficitKw * 1000, 0), { name: "Deficit", ...power, icon: "mdi:alert" });
+    this.publish("sensor", "autonomy", num(ctx.autonomy, 2),
+      { name: "Autonomy", unit_of_measurement: "d", state_class: "measurement", icon: "mdi:battery-clock" });
+    this.publish("sensor", "floor", result.floorPct,
+      { name: "Deepest floor", unit_of_measurement: "%", icon: "mdi:format-vertical-align-bottom" });
+    this.publish("sensor", "shed_count", result.shed.length,
+      { name: "Loads shed", state_class: "measurement", icon: "mdi:flash-off" });
+    this.publish("sensor", "shed_detail", JSON.stringify(result.shed.map((s) => s.id)).slice(0, 255),
+      { name: "Shed loads", icon: "mdi:format-list-bulleted" });
+    this.publish("binary_sensor", "safe_mode", safeMode ? "ON" : "OFF", { name: "Safe mode", device_class: "problem" });
+    this.publish("binary_sensor", "dry_run", dryRun ? "ON" : "OFF", { name: "Dry run", icon: "mdi:test-tube" });
   }
 }
 
-module.exports = { MqttSink };
+module.exports = { MqttSink, resolveBroker };
