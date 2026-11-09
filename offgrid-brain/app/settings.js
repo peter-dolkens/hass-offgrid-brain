@@ -18,18 +18,76 @@ const SETTINGS_PATH = process.env.SETTINGS_PATH || "/config/settings.json";
 const DEFAULTS = Object.freeze({
   dry_run: true,
   tick_seconds: 5,
-  battery: { capacity_kwh: 51.8, inverter_kw: 7.5, max_charge_kw: 7.5, reserve_pct: 10 },
+  // The battery and its inverter, read through one integration (BATTERY_SOURCES).
+  battery: {
+    name: "Battery", source: "none",
+    soc_entity: "", power_entity: "", load_entity: "", energy_in_entity: "", energy_out_entity: "",
+    capacity_kwh: 51.8, inverter_kw: 7.5, max_charge_kw: 7.5, reserve_pct: 10,
+  },
   autonomy: { seed_load_kwh: 30, window_days: 7 },
-  sources: { battery_soc: "", pv_power: "", load_power: "", outdoor_temp: "", pv_forecast_today: "", irradiance: "" },
+  // Readings that don't belong to the battery or an inverter.
+  sources: { outdoor_temp: "", pv_forecast_today: "", irradiance: "" },
   splink: { enabled: false, urls: [], poll_seconds: 15, fast_seconds: 3 },
   ecowitt: { enabled: false, urls: [], poll_seconds: 10 },
-  // One entry per AC-coupled solar inverter, keyed like the bridge's inverters.
-  // kwp null = use the inverter's own configured PV peak.
+  // One entry per AC-coupled solar inverter, each read through its own
+  // integration (see INVERTER_SOURCES). kwp null = what the source reports.
   solar: { inverters: [] },
-  fronius: { enabled: false, hosts: [], poll_seconds: 10 },
 });
 
-const SECTIONS = ["battery", "autonomy", "sources", "splink", "ecowitt", "solar", "fronius"];
+const SECTIONS = ["battery", "autonomy", "sources", "splink", "ecowitt", "solar"];
+
+/* How an inverter's output is read:
+     bridge  the SP PRO bridge's Fronius readings, by the bridge's inverter key
+     fronius the inverter's own Solar API, polled directly
+     ha      a Home Assistant power entity (and optionally an energy entity)
+     none    no live reading; counts toward available capacity only */
+const INVERTER_SOURCES = ["bridge", "fronius", "ha", "none"];
+
+/* How the battery is read:
+     bridge  the SP PRO bridge: SoC, battery power, load, energy counters, charger
+     ha      Home Assistant entities: SoC (required); power (+ = discharging), load,
+             energy in/out (optional)
+     none    no SoC: the brain stays in safe mode */
+const BATTERY_SOURCES = ["bridge", "ha", "none"];
+
+const slug = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+
+/** Before 0.11 the battery had no integration: its SoC and the house load came
+    from the bridge when enabled, else from loose sources.battery_soc /
+    load_power entities, and solar from sources.pv_power. Fold those in. */
+function upgradeBattery(out, from) {
+  const oldSources = (from && from.sources) || {};
+  const b = out.battery;
+  if (!(from && from.battery && from.battery.source)) {
+    if (out.splink.enabled) b.source = "bridge";
+    else if (oldSources.battery_soc) {
+      Object.assign(b, { source: "ha", soc_entity: oldSources.battery_soc, load_entity: oldSources.load_power || "" });
+    }
+  }
+  if (oldSources.pv_power && !out.solar.inverters.length) {
+    out.solar.inverters.push({ id: "solar", name: "Solar", source: "ha", power_entity: oldSources.pv_power,
+                               energy_entity: "", ac_kw: null, kwp: null });
+  }
+  for (const k of ["battery_soc", "load_power", "pv_power"]) delete out.sources[k];
+}
+
+/** Older shapes of the inverter list, converted without needing live data:
+    0.10.0 entries were bridge inverters keyed by `key`; before 0.11 the global
+    Fronius polling section listed hosts. */
+function upgradeInverters(solar, fronius) {
+  const list = (solar.inverters || []).map((x) => (x && x.source ? x : {
+    id: x.key, name: x.name || x.key, source: "bridge", bridge_key: x.key,
+    ac_kw: x.ac_kw == null ? null : x.ac_kw, kwp: x.kwp == null ? null : x.kwp,
+  }));
+  if (fronius && fronius.enabled) {
+    for (const host of fronius.hosts || []) {
+      if (list.some((x) => x.source === "fronius" && x.host === host)) continue;
+      list.push({ id: slug(`fronius_${host}`), name: `Fronius ${host}`, source: "fronius", host,
+                  poll_seconds: fronius.poll_seconds || 10, ac_kw: null, kwp: null });
+    }
+  }
+  return list;
+}
 
 /** Defaults overlaid with whatever `from` provides for the keys settings own. */
 function normalise(from) {
@@ -43,6 +101,8 @@ function normalise(from) {
   // Secrets never live here, even if the source had them (add-on options do).
   delete out.splink.access_client_id;
   delete out.splink.access_client_secret;
+  out.solar.inverters = upgradeInverters(out.solar, from.fronius);
+  upgradeBattery(out, from);
   return out;
 }
 
@@ -56,6 +116,13 @@ function check(s) {
   if (typeof s.dry_run !== "boolean") p.push("dry_run must be true or false");
   if (!num(s.tick_seconds, 2, 300)) p.push("tick_seconds must be 2-300");
   const b = s.battery || {};
+  if (!b.name) p.push("the battery needs a name");
+  if (!BATTERY_SOURCES.includes(b.source)) p.push(`battery integration must be one of ${BATTERY_SOURCES.join(", ")}`);
+  if (b.source === "bridge" && !(s.splink && s.splink.enabled)) p.push("the battery reads from the SP PRO bridge, which isn't enabled");
+  if (b.source === "ha" && (!b.soc_entity || !ENTITY_RE.test(b.soc_entity))) p.push("battery: pick a SoC entity");
+  for (const k of ["soc_entity", "power_entity", "load_entity", "energy_in_entity", "energy_out_entity"]) {
+    if (b.source === "ha" && b[k] && !ENTITY_RE.test(b[k])) p.push(`battery: "${b[k]}" isn't an entity id`);
+  }
   if (!num(b.capacity_kwh, 0.1, 10000)) p.push("battery capacity must be a positive kWh");
   if (!num(b.inverter_kw, 0.1, 1000)) p.push("battery inverter kW must be positive");
   if (!num(b.max_charge_kw, 0.1, 1000)) p.push("max charge kW must be positive");
@@ -85,26 +152,44 @@ function check(s) {
   const inv = (s.solar || {}).inverters;
   if (!Array.isArray(inv)) p.push("solar inverters must be a list");
   else {
-    const keys = new Set();
+    const ids = new Set();
     for (const [i, x] of inv.entries()) {
-      const label = (x && (x.name || x.key)) || `inverter ${i + 1}`;
-      if (!x || typeof x.key !== "string" || !x.key) { p.push(`solar inverter ${i + 1} needs a key`); continue; }
-      if (keys.has(x.key)) p.push(`solar inverter "${x.key}" is listed twice`);
-      keys.add(x.key);
+      const label = (x && x.name) || `Inverter ${i + 1}`;
+      if (!x || typeof x !== "object") { p.push(`inverter ${i + 1} is malformed`); continue; }
+      if (!x.name) p.push(`inverter ${i + 1} needs a name`);
+      if (typeof x.id !== "string" || !/^[a-z0-9_]+$/.test(x.id)) p.push(`${label}: id must be lowercase letters, digits and _`);
+      else if (ids.has(x.id)) p.push(`${label}: another inverter has the id "${x.id}"`);
+      ids.add(x.id);
+      if (!INVERTER_SOURCES.includes(x.source)) { p.push(`${label}: integration must be one of ${INVERTER_SOURCES.join(", ")}`); continue; }
+      if (x.source === "bridge" && !x.bridge_key) p.push(`${label}: pick which bridge inverter it is`);
+      if (x.source === "bridge" && !(s.splink && s.splink.enabled)) p.push(`${label}: reads from the SP PRO bridge, which isn't enabled`);
+      if (x.source === "fronius") {
+        if (!x.host || !/^[a-zA-Z0-9.\-:]+$/.test(x.host)) p.push(`${label}: needs the inverter's IP or hostname`);
+        if (!num(x.poll_seconds, 2, 300)) p.push(`${label}: poll must be 2-300 s`);
+      }
+      if (x.source === "ha") {
+        if (!x.power_entity || !ENTITY_RE.test(x.power_entity)) p.push(`${label}: pick a power entity`);
+        if (x.energy_entity && !ENTITY_RE.test(x.energy_entity)) p.push(`${label}: "${x.energy_entity}" isn't an entity id`);
+      }
       if (x.ac_kw != null && !num(x.ac_kw, 0.1, 1000)) p.push(`${label}: AC rating must be positive kW`);
-      if (x.kwp != null && !num(x.kwp, 0.1, 10000)) p.push(`${label}: array kWp must be positive (or empty to use the inverter's own)`);
+      if (x.kwp != null && !num(x.kwp, 0.1, 10000)) p.push(`${label}: array kWp must be positive (or empty to use what the inverter reports)`);
+      if (x.source === "none" && x.kwp == null) p.push(`${label}: with no integration, the array kWp has to be entered`);
     }
   }
-  const fr = s.fronius || {};
-  if (!Array.isArray(fr.hosts)) p.push("fronius hosts must be a list");
-  if (!num(fr.poll_seconds, 5, 300)) p.push("fronius poll must be 5-300 s");
   return p;
 }
 
 /** Read settings.json, seeding it from the add-on options on first start. */
 function loadSettings(options) {
   try {
-    const s = normalise(JSON.parse(fs.readFileSync(SETTINGS_PATH, "utf8")));
+    const raw = JSON.parse(fs.readFileSync(SETTINGS_PATH, "utf8"));
+    const s = normalise(raw);
+    // An older shape was upgraded in memory: write it back once, so the file
+    // matches what runs (the original is kept as .bak).
+    if (JSON.stringify(s) !== JSON.stringify(raw)) {
+      try { save(s); log.info(`upgraded ${SETTINGS_PATH} to the current format (previous kept as settings.json.bak)`); }
+      catch (w) { log.warn(`could not rewrite ${SETTINGS_PATH}: ${w.message}`); }
+    }
     log.info(`settings loaded from ${SETTINGS_PATH}`);
     return s;
   } catch (e) {
@@ -128,18 +213,19 @@ function save(s, file = SETTINGS_PATH) {
 }
 
 /** Pre-0.10 settings had one AC rating (and kWp override) for every inverter.
-    Turn that into an entry per inverter the bridge reports, once. Returns the
-    migrated settings, or null when there's nothing to migrate yet. */
+    Turn that into a bridge inverter per inverter the bridge reports, once.
+    Returns the migrated settings, or null when there's nothing to migrate yet. */
 function migrateSolar(s, discovered) {
   const legacy = s.solar || {};
   if ((legacy.inverters || []).length || legacy.inverter_ac_kw == null || !(discovered || []).length) return null;
   const next = JSON.parse(JSON.stringify(s));
   next.solar = {
     inverters: discovered.map((i) => ({
-      key: i.key, name: i.name, ac_kw: legacy.inverter_ac_kw, kwp: legacy.kwp == null ? null : legacy.kwp,
+      id: i.key, name: i.name, source: "bridge", bridge_key: i.key,
+      ac_kw: legacy.inverter_ac_kw, kwp: legacy.kwp == null ? null : legacy.kwp,
     })),
   };
   return next;
 }
 
-module.exports = { DEFAULTS, normalise, check, loadSettings, save, migrateSolar, SETTINGS_PATH };
+module.exports = { DEFAULTS, INVERTER_SOURCES, BATTERY_SOURCES, normalise, check, loadSettings, save, migrateSolar, SETTINGS_PATH };

@@ -155,6 +155,7 @@ class MqttSink {
     }
     // Each solar inverter separately: power, and its lifetime energy counter.
     for (const inv of inputs.inverters || []) {
+      if (inv.live === false) continue;   // no integration: nothing to report
       this.publish("sensor", `solar_${inv.key}_power`,
         num(inv.powerKw.ageSec < ENERGY_STALE_SEC ? inv.powerKw.value * 1000 : NaN, 0),
         { name: `${inv.name} power`, ...power, icon: "mdi:solar-power-variant" });

@@ -95,6 +95,16 @@
   .toggle { display: flex; align-items: center; gap: 10px; }
   .toggle input { width: 18px; height: 18px; }
   .live-warn { color: var(--bad); font-weight: 600; }
+  .tile-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; padding: 14px; }
+  .dtile { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--bg); display: flex; flex-direction: column; gap: 8px; }
+  .dtile .head { display: flex; gap: 8px; align-items: center; }
+  .dtile .head input { flex: 1; font-weight: 650; font-size: 15px; }
+  .dtile label { font-size: 12px; font-weight: 600; color: var(--muted); display: block; margin-bottom: 2px; }
+  .dtile input, .dtile select { width: 100%; font: inherit; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--text); }
+  .dtile .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .dtile .hint { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .dtile .now { font-size: 12px; font-family: var(--mono); color: var(--muted); border-top: 1px solid var(--line); padding-top: 8px; }
+  .dtile.add { align-items: center; justify-content: center; border-style: dashed; cursor: pointer; color: var(--muted); font-weight: 600; min-height: 120px; }
   @media (max-width: 640px) { .form { grid-template-columns: 1fr; } .form .help, .form .now { grid-column: 1; } }
 
   /* Policy editor */
@@ -170,15 +180,21 @@
   <section id="tab-settings" hidden>
     <div id="settings-form"><div class="empty">Loading settings…</div></div>
     <div class="card">
-      <h2>Solar inverters <span class="muted">Each AC-coupled inverter's AC rating and array size, for the available-solar estimate. Inverters the bridge reports are listed automatically; kWp left blank uses the inverter's own configured PV peak.</span></h2>
-      <div style="overflow-x:auto"><table class="devtable"><thead><tr>
-        <th>Key</th><th>Name</th><th>AC rating (kW)</th><th>Array (kWp)</th><th></th><th></th>
-      </tr></thead><tbody id="invrows"></tbody></table></div>
+      <h2>Battery <span class="muted">The battery and its inverter: SoC, battery power, house load and energy, read through one integration.</span></h2>
+      <div class="tile-grid" id="battery-tile"></div>
+      <div class="actions">
+        <button class="btn primary" id="btn-batt-save">Save battery</button>
+        <span class="spacer"></span><span id="bstatus" class="muted"></span>
+      </div>
+      <ul class="problems" id="bproblems" hidden></ul>
+    </div>
+    <div class="card">
+      <h2>Solar inverters <span class="muted">Each AC-coupled inverter, read through its own integration, with its AC rating and array size for the available-solar estimate.</span></h2>
+      <div class="tile-grid" id="inv-tiles"></div>
       <div class="actions">
         <button class="btn" id="btn-inv-add">Add inverter</button>
         <button class="btn primary" id="btn-inv-save">Save inverters</button>
-        <span class="spacer"></span>
-        <span id="istatus" class="muted"></span>
+        <span class="spacer"></span><span id="istatus" class="muted"></span>
       </div>
       <ul class="problems" id="iproblems" hidden></ul>
     </div>
@@ -454,17 +470,10 @@ $("btn-revert").onclick = () => { if ($("editor").value === saved || confirm("Di
 const FIELDS = [
   ["Control", "dry_run", "bool", "Dry run", "Decide and log, but switch nothing. Turning this off asks for confirmation."],
   ["Control", "tick_seconds", "int", "Tick (s)", "How often the dispatch list is walked."],
-  ["Battery", "battery.capacity_kwh", "num", "Capacity (kWh)"],
-  ["Battery", "battery.inverter_kw", "num", "Inverter (kW)", "The battery inverter's continuous rating."],
-  ["Battery", "battery.max_charge_kw", "num", "Max charge (kW)"],
-  ["Battery", "battery.reserve_pct", "num", "Reserve (%)", "Nothing may discharge below this."],
-  ["Readings from Home Assistant", "sources.battery_soc", "entity", "Battery SoC", "Only needed without the SP PRO bridge.", "soc"],
-  ["Readings from Home Assistant", "sources.load_power", "entity", "House load", "W or kW.", "power"],
-  ["Readings from Home Assistant", "sources.pv_power", "entity", "Solar power", "W or kW.", "power"],
   ["Readings from Home Assistant", "sources.irradiance", "entity", "Irradiance", "Only needed without an Ecowitt gateway.", "irradiance"],
   ["Readings from Home Assistant", "sources.outdoor_temp", "entity", "Outdoor temperature", "", "temperature"],
   ["Readings from Home Assistant", "sources.pv_forecast_today", "entity", "Solar forecast today", "kWh.", "energy"],
-  ["SP PRO bridge (splink)", "splink.enabled", "bool", "Enabled"],
+  ["SP PRO bridge (splink)", "splink.enabled", "bool", "Enabled", "The connection the battery and inverters use when their integration is the bridge."],
   ["SP PRO bridge (splink)", "splink.urls", "list", "URLs", "One per line, tried in order: LAN first, tunnel second."],
   ["SP PRO bridge (splink)", "splink.poll_seconds", "int", "Full read (s)", "PV and energy counters."],
   ["SP PRO bridge (splink)", "splink.fast_seconds", "int", "Fast window (s)", "SoC and load for shedding; 0 turns it off."],
@@ -473,9 +482,6 @@ const FIELDS = [
   ["Irradiance (Ecowitt gateway)", "ecowitt.poll_seconds", "int", "Poll (s)"],
   ["Autonomy", "autonomy.seed_load_kwh", "num", "Seed daily load (kWh)", "Used until a week of real load history exists."],
   ["Autonomy", "autonomy.window_days", "int", "History window (days)"],
-  ["Fronius direct polling", "fronius.enabled", "bool", "Enabled", "Not needed with the bridge."],
-  ["Fronius direct polling", "fronius.hosts", "list", "Hosts", "One IP per line."],
-  ["Fronius direct polling", "fronius.poll_seconds", "int", "Poll (s)"],
 ];
 
 const SWITCHABLE = ["switch", "input_boolean", "light", "fan", "climate", "water_heater", "humidifier"];
@@ -538,65 +544,137 @@ function readSettings() {
     else v = Number(el.value);
     setPath(s, path, v);
   }
-  s.solar = { inverters: (settingsSaved.solar && settingsSaved.solar.inverters) || [] };   // saved on their own
+  // The battery and inverters are saved by their own tiles.
+  s.battery = settingsSaved.battery;
+  s.solar = settingsSaved.solar;
   return s;
 }
 
-// ---------- solar inverters (saved on their own) ----------
-/* Rows = configured inverters plus any the bridge reports that aren't configured
-   yet. A reported inverter's key is fixed (it's how the bridge names it); rows
-   added by hand, or no longer reported, can be edited and removed. */
-function inverterRows(configured) {
+// ---------- battery and inverter tiles (each saved on its own) ----------
+const INV_SOURCES = [["bridge", "SP PRO bridge"], ["fronius", "Fronius (direct)"], ["ha", "Home Assistant"], ["none", "None"]];
+const BATT_SOURCES = [["bridge", "SP PRO bridge"], ["ha", "Home Assistant"], ["none", "None"]];
+let battModel = null, invModel = [];
+const idSlug = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+const opts = (list, cur) => list.map(([v, l]) => `<option value="${v}" ${v === cur ? "selected" : ""}>${esc(l)}</option>`).join("");
+const field = (label, html, hint) => `<div><label>${esc(label)}</label>${html}${hint ? `<div class="hint">${hint}</div>` : ""}</div>`;
+const inputHtml = (k, v, extra = "") => `<input data-k="${k}" value="${v == null ? "" : esc(v)}" ${extra}>`;
+const numHtml = (k, v, ph) => `<input data-k="${k}" data-num="1" type="number" step="any" value="${v == null ? "" : esc(v)}" placeholder="${esc(ph || "")}">`;
+const entHtml = (k, v, kind) => `<input data-k="${k}" list="dl-${kind}" value="${esc(v || "")}" placeholder="pick an entity" spellcheck="false">`;
+const nowHint = (id) => (id ? esc(entityNow(id)) : "");
+
+function bindTile(el, model, rerender) {
+  for (const inp of el.querySelectorAll("[data-k]")) {
+    inp.addEventListener(inp.tagName === "SELECT" ? "change" : "input", () => {
+      const v = inp.value.trim();
+      model[inp.dataset.k] = inp.dataset.num ? (v === "" ? null : Number(v)) : v;
+      if (inp.tagName === "SELECT") rerender();
+    });
+  }
+}
+
+function renderBattery() {
+  const b = battModel;
+  const soc = state && state.inputs && state.inputs.soc;
+  let fields = "";
+  if (b.source === "bridge") fields = `<div class="hint">SoC, battery power, house load, energy counters and charger state from the SP PRO bridge (connection settings above).</div>`;
+  if (b.source === "ha") fields = field("SoC", entHtml("soc_entity", b.soc_entity, "soc"), nowHint(b.soc_entity))
+    + field("Battery power", entHtml("power_entity", b.power_entity, "power"), "Positive while discharging (Home Assistant's convention). " + nowHint(b.power_entity))
+    + field("House load", entHtml("load_entity", b.load_entity, "power"), nowHint(b.load_entity))
+    + `<div class="row2">${field("Energy in", entHtml("energy_in_entity", b.energy_in_entity, "energy"))}${field("Energy out", entHtml("energy_out_entity", b.energy_out_entity, "energy"))}</div>`;
+  if (b.source === "none") fields = `<div class="live-warn">No SoC reading: the brain will stay in safe mode.</div>`;
+  $("battery-tile").innerHTML = `<div class="dtile" id="batt-el">
+    <div class="head">${inputHtml("name", b.name, 'placeholder="Name"')}</div>
+    ${field("Integration", `<select data-k="source">${opts(BATT_SOURCES, b.source)}</select>`)}
+    ${fields}
+    <div class="row2">${field("Capacity (kWh)", numHtml("capacity_kwh", b.capacity_kwh))}${field("Reserve (%)", numHtml("reserve_pct", b.reserve_pct), "Nothing may discharge below this.")}</div>
+    <div class="row2">${field("Inverter (kW)", numHtml("inverter_kw", b.inverter_kw), "Continuous rating.")}${field("Max charge (kW)", numHtml("max_charge_kw", b.max_charge_kw))}</div>
+    <div class="now">${soc && Number.isFinite(soc.value) ? `now ${fmt(soc.value)}% · ${esc(soc.from)} · ${agoEl(soc.ageSec)}` : "no SoC reading"}</div>
+  </div>`;
+  bindTile($("batt-el"), b, renderBattery);
+}
+
+function renderInverters() {
   const disc = (state && state.solar && state.solar.discovered) || [];
-  const byKey = new Map(configured.map((c) => [c.key, { ...c }]));
-  for (const d of disc) if (!byKey.has(d.key)) byKey.set(d.key, { key: d.key, name: d.name, ac_kw: null, kwp: null });
-  return [...byKey.values()];
-}
-
-function renderInverters(rows) {
-  const disc = new Map(((state && state.solar && state.solar.discovered) || []).map((d) => [d.key, d]));
-  $("invrows").innerHTML = rows.map((r, i) => {
-    const d = disc.get(r.key);
-    const keyCell = d ? `<code>${esc(r.key)}</code><input data-k="key" type="hidden" value="${esc(r.key)}">`
-      : `<input data-k="key" value="${esc(r.key || "")}" placeholder="bridge key" spellcheck="false">`;
-    const note = !d ? (r.key ? "not reported by the bridge right now" : "new")
-      : r.ac_kw == null ? '<span class="live-warn">needs an AC rating</span>' : "reported by the bridge";
-    return `<tr data-inv="${i}">
-      <td>${keyCell}</td>
-      <td><input data-k="name" value="${esc(r.name || "")}"></td>
-      <td><input data-k="ac_kw" class="num" type="number" step="any" value="${r.ac_kw == null ? "" : esc(r.ac_kw)}" placeholder="kW"></td>
-      <td><input data-k="kwp" class="num" type="number" step="any" value="${r.kwp == null ? "" : esc(r.kwp)}"
-        placeholder="${d && Number.isFinite(d.kwp) ? esc(d.kwp) : "kWp"}"></td>
-      <td class="muted" style="font-size:12px">${note}</td>
-      <td>${d ? "" : `<button class="btn" data-inv-del="${i}">Remove</button>`}</td></tr>`;
-  }).join("") || '<tr><td colspan="6" class="muted">No inverters yet. Reported inverters appear here once the SP PRO bridge reads them, or add one.</td></tr>';
-  for (const b of document.querySelectorAll("[data-inv-del]")) b.onclick = () => {
-    const next = readInverters(); next.splice(Number(b.dataset.invDel), 1); renderInverters(next);
-  };
-}
-
-function readInverters() {
-  return [...document.querySelectorAll("#invrows tr[data-inv]")].map((tr) => {
-    const x = {};
-    for (const el of tr.querySelectorAll("input[data-k]")) {
-      const v = el.value.trim();
-      if (el.dataset.k === "key" || el.dataset.k === "name") x[el.dataset.k] = v;
-      else x[el.dataset.k] = v === "" ? null : Number(v);
+  const live = new Map(((state && state.solar && state.solar.inverters) || []).map((x) => [x.id, x]));
+  const html = invModel.map((x, i) => {
+    let fields = "";
+    if (x.source === "bridge") {
+      const choices = disc.map((d) => [d.key, `${d.name} (${d.key})`]);
+      if (x.bridge_key && !disc.some((d) => d.key === x.bridge_key)) choices.push([x.bridge_key, `${x.bridge_key} (not reported now)`]);
+      fields = field("Bridge inverter", `<select data-k="bridge_key"><option value="">pick one</option>${opts(choices, x.bridge_key)}</select>`);
     }
-    return x;
-  });
+    if (x.source === "fronius") fields = `<div class="row2">${field("IP or hostname", inputHtml("host", x.host, 'placeholder="192.168.1.21" spellcheck="false"'))}${field("Poll (s)", numHtml("poll_seconds", x.poll_seconds, "10"))}</div>`;
+    if (x.source === "ha") fields = field("Power", entHtml("power_entity", x.power_entity, "power"), nowHint(x.power_entity))
+      + field("Energy (optional)", entHtml("energy_entity", x.energy_entity, "energy"), "For the Energy dashboard. " + nowHint(x.energy_entity));
+    if (x.source === "none") fields = `<div class="hint">No live reading: counts toward available capacity only.</div>`;
+    const l = live.get(x.id);
+    const reported = l && Number.isFinite(l.reportedKwp) ? l.reportedKwp : (disc.find((d) => d.key === x.bridge_key) || {}).kwp;
+    const now = x.source === "none" ? "" : l && l.power && Number.isFinite(l.power.value)
+      ? `now ${watts(l.power.value)} · ${agoEl(l.power.ageSec)}` : x._new ? "save to start reading" : "no reading";
+    return `<div class="dtile" data-i="${i}">
+      <div class="head">${inputHtml("name", x.name, 'placeholder="Name"')}<button class="btn" data-del="inv-${i}">Remove</button></div>
+      ${field("Integration", `<select data-k="source">${opts(INV_SOURCES, x.source)}</select>`)}
+      ${fields}
+      <div class="row2">${field("AC rating (kW)", numHtml("ac_kw", x.ac_kw, "kW"), x.ac_kw == null ? '<span class="live-warn">needed</span>' : "")}
+        ${field("Array (kWp)", numHtml("kwp", x.kwp, Number.isFinite(reported) ? String(reported) : "kWp"), Number.isFinite(reported) ? "Blank = what the inverter reports." : x.source === "none" ? "Required." : "")}</div>
+      <div class="now">${x._new ? "new" : `id ${esc(x.id)}`}${now ? " · " + now : ""}</div>
+    </div>`;
+  }).join("");
+  $("inv-tiles").innerHTML = html + `<div class="dtile add" id="inv-add-tile">+ Add inverter</div>`;
+  for (const el of document.querySelectorAll("#inv-tiles .dtile[data-i]")) bindTile(el, invModel[Number(el.dataset.i)], renderInverters);
+  for (const b of document.querySelectorAll('[data-del^="inv-"]')) b.onclick = () => { invModel.splice(Number(b.dataset.del.slice(4)), 1); renderInverters(); };
+  $("inv-add-tile").onclick = addInverter;
+}
+
+function addInverter() {
+  const disc = (state && state.solar && state.solar.discovered) || [];
+  const unused = disc.find((d) => !invModel.some((x) => x.source === "bridge" && x.bridge_key === d.key));
+  invModel.push(unused
+    ? { name: unused.name, source: "bridge", bridge_key: unused.key, ac_kw: null, kwp: null, _new: true }
+    : { name: "", source: "fronius", host: "", poll_seconds: 10, ac_kw: null, kwp: null, _new: true });
+  renderInverters();
+}
+
+/** Strip UI-only fields and the fields other integrations use; give new inverters an id. */
+function cleanInverter(x) {
+  const keep = { bridge: ["bridge_key"], fronius: ["host", "poll_seconds"], ha: ["power_entity", "energy_entity"], none: [] }[x.source] || [];
+  const out = { id: x.id || idSlug(x.name), name: x.name, source: x.source };
+  for (const k of keep) out[k] = x[k] == null ? (k === "energy_entity" ? "" : null) : x[k];
+  out.ac_kw = x.ac_kw == null ? null : x.ac_kw;
+  out.kwp = x.kwp == null ? null : x.kwp;
+  return out;
+}
+
+async function putSettings(next, statusEl, problemsEl, okText) {
+  const r = await fetch("api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ settings: next }) });
+  const out = await r.json();
+  if (!r.ok) { showList(problemsEl, out.problems || [out.error]); statusEl.textContent = "Not saved."; return false; }
+  showList(problemsEl, []);
+  settingsSaved = next;
+  statusEl.textContent = okText;
+  setTimeout(refresh, 800);
+  return true;
+}
+
+async function saveBattery() {
+  await putSettings({ ...settingsSaved, battery: { ...battModel } }, $("bstatus"), $("bproblems"), "Saved and applied.");
 }
 
 async function saveInverters() {
-  const next = { ...settingsSaved, solar: { inverters: readInverters() } };
-  const r = await fetch("api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ settings: next }) });
-  const out = await r.json();
-  if (!r.ok) { showList($("iproblems"), out.problems || [out.error]); $("istatus").textContent = "Not saved."; return; }
-  showList($("iproblems"), []);
-  settingsSaved = next;
-  renderInverters(inverterRows(settingsSaved.solar.inverters));
-  $("istatus").textContent = "Saved and applied.";
-  setTimeout(refresh, 800);
+  const list = invModel.map(cleanInverter);
+  if (await putSettings({ ...settingsSaved, solar: { inverters: list } }, $("istatus"), $("iproblems"), "Saved and applied.")) {
+    invModel = list.map((x) => ({ ...x }));
+    renderInverters();
+  }
+}
+
+function loadTiles() {
+  battModel = { ...settingsSaved.battery };
+  invModel = ((settingsSaved.solar && settingsSaved.solar.inverters) || []).map((x) => ({ ...x }));
+  renderBattery();
+  renderInverters();
+  for (const el of ["bstatus", "istatus"]) $(el).textContent = "";
+  showList($("bproblems"), []); showList($("iproblems"), []);
 }
 
 function showList(el, list) { el.innerHTML = list.map((p) => `<li>${esc(p)}</li>`).join(""); el.hidden = !list.length; }
@@ -610,8 +688,7 @@ async function loadSettingsTab() {
   fillDatalists();
   settingsSaved = st.settings;
   renderSettings(settingsSaved);
-  renderInverters(inverterRows((settingsSaved.solar && settingsSaved.solar.inverters) || []));
-  $("istatus").textContent = ""; showList($("iproblems"), []);
+  loadTiles();
   $("sstatus").textContent = `${st.path} · ${entities.length} Home Assistant entities available`;
   showList($("sproblems"), []);
   const pol = await fetch("api/policy", { cache: "no-store" }).then((r) => r.json());
@@ -682,8 +759,9 @@ $("btn-settings-save").onclick = saveSettings;
 $("btn-settings-revert").onclick = () => { renderSettings(settingsSaved); showList($("sproblems"), []); $("sstatus").textContent = "Reverted to the saved settings."; };
 $("btn-dev-add").onclick = () => { const d = readDevices(); d.push({ id: "", name: "", kw: 0 }); renderDevices(d); };
 $("btn-dev-save").onclick = saveDevices;
-$("btn-inv-add").onclick = () => { const rows = readInverters(); rows.push({ key: "", name: "", ac_kw: null, kwp: null }); renderInverters(rows); };
+$("btn-inv-add").onclick = addInverter;
 $("btn-inv-save").onclick = saveInverters;
+$("btn-batt-save").onclick = saveBattery;
 
 // ---------- tabs ----------
 for (const b of document.querySelectorAll("nav button")) {

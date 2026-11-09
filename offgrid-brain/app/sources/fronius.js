@@ -27,7 +27,8 @@ class FroniusPoller {
   constructor({ hosts, pollSeconds }) {
     this.hosts = hosts || [];
     this.pollSeconds = pollSeconds || 10;
-    this.inverters = new Map();   // host -> { pac, totalWh, serial, name, state, errorCode, updated }
+    this.inverters = new Map();   // host -> { pac, pvPowerW, totalWh, serial, name, state, errorCode, updated }
+    this.failing = new Set();
     this.timer = null;
   }
 
@@ -62,8 +63,13 @@ class FroniusPoller {
         ]);
         const d = rt.Body.Data;
         const meta = Object.values(info.Body.Data)[0] || {};
+        // A sleeping inverter (night) answers without PAC: that's 0 W, not unknown.
+        const pac = d.PAC ? d.PAC.Value : 0;
+        if (this.failing.has(host)) log.info(`fronius ${host} reads recovered`);
+        this.failing.delete(host);
         this.inverters.set(host, {
-          pac: d.PAC && d.PAC.Value,
+          pac,
+          pvPowerW: meta.PVPower,   // the inverter's configured PV array peak
           totalWh: d.TOTAL_ENERGY && d.TOTAL_ENERGY.Value,
           fac: d.FAC && d.FAC.Value,
           uac: d.UAC && d.UAC.Value,
@@ -74,7 +80,8 @@ class FroniusPoller {
           updated: Date.now(),
         });
       } catch (e) {
-        log.warn(`fronius ${host} poll failed`, e.message);
+        if (!this.failing.has(host)) log.warn(`fronius ${host} poll failed`, e.message);
+        this.failing.add(host);
       }
     }));
   }

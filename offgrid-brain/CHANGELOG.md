@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.11.0
+- **The battery and solar inverters are tiles**, each with a name and an
+  **integration** that decides how it's read. Picking one reveals its fields:
+  - Battery: SP PRO bridge / Home Assistant (SoC, power, load and energy entity
+    pickers) / none. Capacity, reserve, inverter rating and max charge sit on the tile.
+  - Inverters: SP PRO bridge (pick which of its inverters) / Fronius direct (IP, poll
+    interval) / Home Assistant (power and energy pickers) / none. Each has its own
+    AC rating and array kWp. Add inverter / Save inverters / Remove.
+- Fronius inverters polled directly replace the old global "Fronius direct polling"
+  section. Its hosts become inverter tiles.
+- The loose battery SoC, house load and solar power readings move into the battery
+  and inverter tiles. Existing settings are converted on first start (the file is
+  rewritten once, previous kept as .bak).
+- Home Assistant power and energy entities are converted from their own units
+  (W/kW, Wh/kWh). A Home Assistant battery-power entity follows HA's sign
+  convention (positive = discharging).
+- Delivered solar is the sum of the configured inverters when all are reading.
+
 ## 0.10.1
 - Settings → Solar inverters has its own **Add inverter** and **Save inverters**
   buttons, like Devices; **Save settings** no longer saves the inverter list.

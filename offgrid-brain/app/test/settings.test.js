@@ -42,7 +42,8 @@ t("seeding carries the old options over, without secrets", () => {
 t("defaults fill anything the options didn't have", () => {
   const s = Settings.normalise({});
   assert.strictEqual(s.dry_run, true);
-  assert.strictEqual(s.fronius.poll_seconds, 10);
+  assert.strictEqual(s.battery.source, "none");
+  assert.deepStrictEqual(s.solar.inverters, []);
   assert.deepStrictEqual(Settings.check(s), []);
 });
 
@@ -74,18 +75,64 @@ t("solar inverters: the old single AC rating becomes one entry per inverter, onc
   assert.strictEqual(Settings.migrateSolar(s, []), null, "waits until the bridge reports inverters");
   const m = Settings.migrateSolar(s, disc);
   assert.deepStrictEqual(m.solar, { inverters: [
-    { key: "right", name: "Solar Inverter (Right)", ac_kw: 10, kwp: null },
-    { key: "left", name: "Solar Inverter (Left)", ac_kw: 10, kwp: null },
+    { id: "right", name: "Solar Inverter (Right)", source: "bridge", bridge_key: "right", ac_kw: 10, kwp: null },
+    { id: "left", name: "Solar Inverter (Left)", source: "bridge", bridge_key: "left", ac_kw: 10, kwp: null },
   ] });
   assert.strictEqual(Settings.migrateSolar(m, disc), null, "only once");
   assert.deepStrictEqual(Settings.check(m), []);
 });
 
-t("solar inverter validation", () => {
+t("0.10 bridge-keyed inverters become bridge-integration inverters", () => {
+  const s = Settings.normalise({ splink: { enabled: true, urls: ["https://x/"] },
+    solar: { inverters: [{ key: "right", name: "Solar Inverter (Right)", ac_kw: 10, kwp: null }] } });
+  assert.deepStrictEqual(s.solar.inverters, [
+    { id: "right", name: "Solar Inverter (Right)", source: "bridge", bridge_key: "right", ac_kw: 10, kwp: null }]);
+  assert.deepStrictEqual(Settings.check(s), []);
+});
+
+t("old global Fronius hosts become fronius-integration inverters", () => {
+  const s = Settings.normalise({ fronius: { enabled: true, hosts: ["192.168.1.21"], poll_seconds: 10 } });
+  assert.strictEqual(s.solar.inverters[0].source, "fronius");
+  assert.strictEqual(s.solar.inverters[0].host, "192.168.1.21");
+  assert.ok(!("fronius" in s), "the global section is gone");
+});
+
+t("inverter validation follows each integration's fields", () => {
   const s = Settings.normalise({});
-  s.solar.inverters = [{ key: "a", ac_kw: -1 }, { key: "a", ac_kw: 5 }, { name: "no key" }, { key: "b", kwp: 0 }];
+  s.solar.inverters = [
+    { id: "a", name: "A", source: "ha" },
+    { id: "a", name: "B", source: "none" },
+    { id: "Bad Id", name: "", source: "fronius", poll_seconds: 1 },
+    { id: "c", name: "C", source: "bridge" },
+    { id: "d", name: "D", source: "toaster" },
+    { id: "e", name: "E", source: "fronius", host: "192.168.1.21", poll_seconds: 10, ac_kw: -1 },
+  ];
   const p = Settings.check(s).join(" | ");
-  for (const want of ["AC rating", "listed twice", "needs a key", "array kWp"]) assert.ok(p.includes(want), `${want}: ${p}`);
+  for (const want of ["A: pick a power entity", "B: another inverter has the id", "B: with no integration, the array kWp",
+    "needs a name", "id must be lowercase", "needs the inverter's IP", "poll must be 2-300", "C: pick which bridge inverter",
+    "C: reads from the SP PRO bridge, which isn't enabled", "D: integration must be one of", "E: AC rating must be positive"]) {
+    assert.ok(p.includes(want), `expected "${want}" in: ${p}`);
+  }
+});
+
+t("battery: the bridge when it's enabled, else old SoC/load entities, else none", () => {
+  const viaBridge = Settings.normalise(oldOptions);
+  assert.strictEqual(viaBridge.battery.source, "bridge");
+  assert.strictEqual(viaBridge.battery.capacity_kwh, 51.8);
+  const viaHa = Settings.normalise({ sources: { battery_soc: "sensor.soc", load_power: "sensor.load", pv_power: "sensor.pv" } });
+  assert.deepStrictEqual([viaHa.battery.source, viaHa.battery.soc_entity, viaHa.battery.load_entity], ["ha", "sensor.soc", "sensor.load"]);
+  assert.strictEqual(viaHa.solar.inverters[0].power_entity, "sensor.pv", "loose pv_power becomes an ha inverter");
+  assert.ok(!("battery_soc" in viaHa.sources) && !("pv_power" in viaHa.sources));
+  assert.strictEqual(Settings.normalise({}).battery.source, "none");
+});
+
+t("battery validation", () => {
+  const s = Settings.normalise({});
+  Object.assign(s.battery, { name: "", source: "ha", soc_entity: "", power_entity: "nope" });
+  const p = Settings.check(s).join(" | ");
+  for (const want of ["needs a name", "pick a SoC entity", '"nope" isn\'t an entity id']) assert.ok(p.includes(want), `${want}: ${p}`);
+  const b = Settings.normalise({}); b.battery.source = "bridge";
+  assert.ok(Settings.check(b).some((x) => x.includes("bridge, which isn't enabled")));
 });
 
 t("old option devices fold into policy.json devices", () => {

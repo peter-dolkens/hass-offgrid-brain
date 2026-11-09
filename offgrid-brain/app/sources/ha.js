@@ -128,6 +128,20 @@ class HAClient {
     return { value: parseFloat(s.state), ageSec: (Date.now() - s.updated) / 1000 };
   }
 
+  /** Power in kW, converting from the entity's own unit (W, kW, MW). */
+  powerKw(entityId) { return this._scaled(entityId, { w: 1e-3, kw: 1, mw: 1e3 }); }
+
+  /** Energy in kWh, converting from the entity's own unit (Wh, kWh, MWh). */
+  energyKwh(entityId) { return this._scaled(entityId, { wh: 1e-3, kwh: 1, mwh: 1e3 }); }
+
+  _scaled(entityId, factors) {
+    const r = this.number(entityId);
+    if (!Number.isFinite(r.value)) return r;
+    const unit = String((this.states.get(entityId).attributes || {}).unit_of_measurement || "").toLowerCase();
+    const f = factors[unit];
+    return f == null ? { value: NaN, ageSec: Infinity } : { value: r.value * f, ageSec: r.ageSec };
+  }
+
   callService(domain, service, entityId, data = {}) {
     return this.send({ type: "call_service", domain, service, target: { entity_id: entityId }, service_data: data });
   }

@@ -19,7 +19,8 @@ const log = require("./log.js");
 const { loadOptions, loadPolicy, check, validate, mergeDeviceOptions, POLICY_PATH } = require("./config.js");
 const Settings = require("./settings.js");
 const { HAClient } = require("./sources/ha.js");
-const { FroniusPoller } = require("./sources/fronius.js");
+const { InverterSet } = require("./sources/inverters.js");
+const { readBattery, batteryEntities } = require("./sources/battery.js");
 const { SplinkPoller } = require("./sources/splink.js");
 const { EcowittPoller } = require("./sources/ecowitt.js");
 const { SolarEstimator, isUnconstrained } = require("./policy/solar.js");
@@ -84,12 +85,15 @@ async function main() {
   const estimator = new SolarEstimator({ state: saved.solar });
 
   // ---- parts rebuilt when their settings change ------------------------------
-  let splink = null, ecowitt = null, fronius = null, timer = null;
+  let splink = null, ecowitt = null, timer = null;
+  const inverters = new InverterSet({ ha });   // each solar inverter, read through its own integration
   let limits = null;
 
   function trackEntities() {
     ha.track(Object.values(settings.sources).filter(Boolean));
     ha.track(policy.devices.flatMap((d) => [d.switch, d.power_sensor]).filter(Boolean));
+    ha.track(inverters.entities());
+    ha.track(batteryEntities(settings.battery));
   }
 
   /** Make `next` the settings in force, rebuilding only what changed. */
@@ -118,11 +122,7 @@ async function main() {
       ecowitt = new EcowittPoller({ urls: next.ecowitt.urls, pollSeconds: next.ecowitt.poll_seconds });
       if (next.ecowitt.enabled) ecowitt.start();
     }
-    if (changed("fronius")) {
-      if (fronius) fronius.stop();
-      fronius = new FroniusPoller({ hosts: next.fronius.hosts, pollSeconds: next.fronius.poll_seconds });
-      if (next.fronius.enabled) fronius.start();
-    }
+    if (changed("solar")) inverters.configure(next.solar.inverters);
     if (changed("tick_seconds")) {
       if (timer) clearInterval(timer);
       timer = setInterval(runTick, next.tick_seconds * 1000);
@@ -184,14 +184,30 @@ async function main() {
     const tickSec = settings.tick_seconds;
     const dryRun = settings.dry_run;
 
-    // Each input takes the first FRESH reading, most direct path first: the
-    // splink bridge, then a mapped HA entity, then (PV only) direct Fronius.
+    // Each input takes the first FRESH reading, most direct path first.
     const sp = settings.splink.enabled ? splink.readings : {};
-    const kw = (r) => ({ value: r.value / 1000, ageSec: r.ageSec });   // HA powers are W
-    const fronPv = settings.fronius.enabled ? { value: fronius.pvKw, ageSec: fronius.ageSec } : null;
-    const socEnt = pick([["splink", sp.soc], ["ha", ha.number(sources.battery_soc)]]);
-    const loadEnt = pick([["splink", sp.loadKw], ["ha", kw(ha.number(sources.load_power))]]);
-    const pvEnt = pick([["splink", sp.pvKw], ["ha", kw(ha.number(sources.pv_power))], ["fronius", fronPv]]);
+
+    // One-time: pre-0.10 settings had a single AC rating for every inverter.
+    const migrated = Settings.migrateSolar(settings, sp.inverters);
+    if (migrated) {
+      Settings.save(migrated);
+      applySettings(migrated, settings);
+      log.info(`solar: gave each inverter its own entry (${migrated.solar.inverters.map((i) => i.id).join(", ")}); edit them in Settings`);
+    }
+    // Solar: the configured inverters, each through its own integration. Their
+    // sum is delivered PV when every live one has a fresh reading.
+    const inv = inverters.read(sp);
+    const liveInv = inv.filter((i) => i.live);
+    const invSum = liveInv.length && liveInv.every((i) => Number.isFinite(i.powerKw.value) && i.powerKw.ageSec < STALE_SEC)
+      ? { value: liveInv.reduce((t, i) => t + i.powerKw.value, 0), ageSec: Math.max(...liveInv.map((i) => i.powerKw.ageSec)) }
+      : null;
+
+    // The battery: SoC, house load, battery power and energy, through its integration.
+    const batt = readBattery(battery, sp, ha);
+    const socEnt = pick([[batt.source, batt.soc]]);
+    const loadEnt = pick([[batt.source, batt.loadKw]]);
+    // With no inverters configured, fall back to the bridge's own PV total.
+    const pvEnt = pick([["inverters", invSum], ["splink", inv.length ? null : sp.pvKw]]);
     const pvAge = pvEnt.ageSec;
     const toutEnt = ha.number(sources.outdoor_temp);
     const fcEnt = ha.number(sources.pv_forecast_today);
@@ -201,7 +217,7 @@ async function main() {
     const safeMode = !socUsable;
     const soc = socUsable ? socEnt.value : battery.reserve_pct;
     if (safeMode) {
-      const configured = settings.splink.enabled || sources.battery_soc;
+      const configured = battery.source !== "none";
       log.warn(`SAFE MODE — battery SoC ${configured ? "unavailable or stale" : "not configured"}${Number.isFinite(socEnt.ageSec) ? ` (newest reading ${socEnt.ageSec.toFixed(0)}s old)` : ""}; assuming reserve (${battery.reserve_pct}%) and shedding all discretionary load`);
     }
 
@@ -215,28 +231,17 @@ async function main() {
     const irrEnt = pick([["ecowitt", ecowitt.irradiance], ["ha", ha.number(sources.irradiance)]]);
     const irradiance = irrEnt.ageSec < STALE_SEC ? irrEnt.value : NaN;
     const pvDelivered = Number.isFinite(pvEnt.value) && pvAge < STALE_SEC ? pvEnt.value : NaN;
-    // One-time: pre-0.10 settings had a single AC rating for every inverter.
-    const migrated = Settings.migrateSolar(settings, sp.inverters);
-    if (migrated) {
-      Settings.save(migrated);
-      applySettings(migrated, settings);
-      log.info(`solar: gave each inverter its own entry (${migrated.solar.inverters.map((i) => i.key).join(", ")}); edit them in Settings`);
-    }
-    // Each inverter's own array size and AC rating; kWp falls back to what the
-    // inverter itself is configured with.
-    const invCfg = new Map(settings.solar.inverters.map((c) => [c.key, c]));
-    const arrays = (sp.inverters || []).map((i) => {
-      const c = invCfg.get(i.key) || {};
-      return {
-        key: i.key, name: c.name || i.name, kwp: c.kwp || i.kwp, acKw: c.ac_kw || NaN, configured: !!invCfg.get(i.key),
-        kw: i.powerKw.ageSec < STALE_SEC ? i.powerKw.value : NaN,
-      };
-    });
+    // Each inverter's own array size and AC rating (kWp falls back to what its
+    // source reports). An inverter with no live reading still adds capacity.
+    const arrays = inv.map((i) => ({
+      key: i.id, name: i.name, kwp: i.kwp, acKw: i.acKw, source: i.source,
+      kw: i.live && i.powerKw.ageSec < STALE_SEC ? i.powerKw.value : NaN,
+    }));
     const unconstrained = isUnconstrained({
       socPct: socUsable ? socEnt.value : NaN,
-      batteryKw: sp.batteryKw && sp.batteryKw.ageSec < STALE_SEC ? sp.batteryKw.value : NaN,
+      batteryKw: batt.batteryKw.ageSec < STALE_SEC ? batt.batteryKw.value : NaN,
       pvKw: pvDelivered,
-      loadKw, chargeLimitKw: sp.chargeLimitKw,
+      loadKw, chargeLimitKw: batt.chargeLimitKw,
     });
     estimator.learn({ now, irradiance, inverters: arrays, unconstrained });
     const perArray = Number.isFinite(irradiance) ? estimator.estimate({ now, irradiance, inverters: arrays }) : [];
@@ -248,9 +253,10 @@ async function main() {
       irradiance: irrEnt, deliveredKw: pvDelivered, availableKw: pvAvailable,
       headroomKw: Number.isFinite(pvAvailable) && Number.isFinite(pvDelivered) ? Math.max(0, pvAvailable - pvDelivered) : NaN,
       curtailed: perArray.some((a) => a.curtailed), unconstrained,
-      charger: sp.charger || null,
-      arrays: perArray.map((a, n) => ({ ...a, name: arrays[n].name, configured: arrays[n].configured })),
-      // What the bridge reports, for the Settings tab's inverter table.
+      charger: batt.charger,
+      arrays: perArray.map((a, n) => ({ ...a, name: arrays[n].name, source: arrays[n].source })),
+      // Live reading per configured inverter, and what the bridge reports, for the Settings tiles.
+      inverters: inv.map((i) => ({ id: i.id, power: i.powerKw, energy: i.energyKwh, reportedKwp: i.reportedKwp })),
       discovered: (sp.inverters || []).map((i) => ({ key: i.key, name: i.name, kwp: i.kwp })),
     };
 
@@ -294,7 +300,7 @@ async function main() {
     lastCtx = ctx;
     snapshot = {
       time: now.toISOString(), version: VERSION, dryRun, safeMode, tickSec, battery,
-      inputs: { soc: socEnt, loadKw: loadEnt, pvKw: pvEnt, batteryKw: sp.batteryKw || null, energy: sp.energy || null, inverters: sp.inverters || [] },
+      inputs: { soc: socEnt, loadKw: loadEnt, pvKw: pvEnt, batteryKw: batt.source === "none" ? null : batt.batteryKw, energy: batt.energy, inverters: inv },
       splinkSource: settings.splink.enabled ? splink.source : null,
       solar,
       ctx,

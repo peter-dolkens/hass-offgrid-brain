@@ -55,19 +55,38 @@ there. On first start, 0.9.0 copies those options into `settings.json`, and devi
 switches into `policy.json`, so an existing install keeps its setup. The old option
 fields are ignored after that and will be removed in a later release.
 
-### Where readings come from
+### Battery and solar inverters
 
-Each input takes the **first fresh reading** (newer than 300 s) from these, in order:
+The battery and each solar inverter are configured as **tiles** in Settings. Each
+has a name and an **integration** that decides how it's read. Picking an
+integration reveals its fields.
 
-| Input | 1st | 2nd | 3rd |
-|---|---|---|---|
-| Battery SoC | `splink` | `sources.battery_soc` | none: safe mode |
-| House load | `splink` | `sources.load_power` | none |
-| PV (delivered) | `splink` | `sources.pv_power` | `fronius` |
-| Irradiance | `ecowitt` | `sources.irradiance` | none: no available-solar estimate |
+**Battery** (one tile): SoC, battery power, house load and energy.
 
-The log line for every tick says which source each reading came from, e.g.
-`soc=87.2%(splink) load=640W(splink) pv=3120W(ha)`.
+| Integration | Fields |
+|---|---|
+| SP PRO bridge | none: everything comes from the bridge, including charger state and charge limit |
+| Home Assistant | SoC entity (required); battery power (positive = discharging), house load, energy in/out (optional) |
+| None | none: with no SoC the brain stays in safe mode |
+
+All integrations also take capacity (kWh), reserve (%), inverter rating (kW) and
+max charge (kW).
+
+**Solar inverters** (a tile each, **Add inverter** / **Save inverters**):
+
+| Integration | Fields |
+|---|---|
+| SP PRO bridge | which of the bridge's inverters it is |
+| Fronius (direct) | IP or hostname, poll interval: read from the inverter's own Solar API |
+| Home Assistant | power entity; energy entity (optional, for the Energy dashboard) |
+| None | none: no live reading, counts toward available capacity only |
+
+Every inverter also takes its **AC rating** (kW) and **array** (kWp). A blank kWp
+uses what the inverter reports (Fronius `PVPower`), and with no integration kWp is
+required. **Delivered solar** is the sum of the inverters' readings when every
+inverter with an integration has a fresh one; otherwise the bridge's own total is used.
+Home Assistant power and energy entities are converted from their own units
+(W/kW, Wh/kWh).
 
 ### `splink`: SP PRO bridge (recommended)
 
@@ -89,7 +108,8 @@ splink:
   access_client_secret: ""             # tunnel is behind Access
 ```
 
-Each URL is the bridge's base address: the brain reads the full document from it
+The bridge is a **connection**: the battery and any inverter whose integration is
+the bridge read through it. Each URL is the bridge's base address: the brain reads the full document from it
 and the bridge's **fast window** from `<url>fast`. The fast window carries SoC and
 AC load re-read every few seconds, which is what shedding needs; the full document
 supplies PV and refreshes its SP PRO section only about every two minutes. Each
@@ -111,17 +131,8 @@ estimates what each array **could** produce:
 
     available = irradiance / 1000 × array kWp × k,  capped at that inverter's AC rating
 
-- **Each inverter is configured separately** in Settings → Solar inverters, with its
-  own **AC rating** and **array kWp**. Inverters the bridge reports appear there
-  automatically. A blank kWp uses the inverter's own configured PV peak (Fronius
-  `PVPower`). The AC rating has to be entered, because the inverter doesn't report
-  it. An inverter without one is capped at its kWp and flagged in the panel.
-
-  ```json
-  "solar": { "inverters": [
-    { "key": "right", "name": "Solar Inverter (Right)", "ac_kw": 10, "kwp": null },
-    { "key": "left",  "name": "Solar Inverter (Left)",  "ac_kw": 10, "kwp": null } ] }
-  ```
+- **Each inverter's own AC rating and array kWp** come from its tile (see above).
+  An inverter without an AC rating is capped at its kWp and flagged in the panel.
 - **k** captures everything a horizontal irradiance sensor doesn't know about the
   array: tilt and azimuth, temperature, soiling and losses. It is **learned per
   inverter and per half-hour of the day**, only from moments the array is
@@ -150,18 +161,11 @@ ecowitt:
 Reads solar radiation (`0x15`) from the gateway's local API (`/get_livedata_info`).
 It needs a solar sensor on the gateway, such as a WS90.
 
-### `sources`: logical name → HA entity
+### Other readings
 
-| Key | What it needs | Required |
-|---|---|---|
-| `battery_soc` | Battery state of charge, % | Only without `splink` (see Safe mode) |
-| `pv_power` | PV production, W | No |
-| `load_power` | House load, W | No, but `autonomy` degrades without load |
-| `outdoor_temp` | Outdoor temperature, °C | No |
-| `pv_forecast_today` | Forecast generation today, kWh | No (see Known gaps) |
-
-Every entity is optional and may be left blank. An entity that doesn't resolve reads
-as unavailable.
+Settings → Readings maps the readings that don't belong to the battery or an
+inverter: **irradiance** (when no Ecowitt gateway is polled), **outdoor
+temperature** and the **solar forecast** for today (kWh). All are optional.
 
 ### Devices: what the brain may switch
 
@@ -185,20 +189,10 @@ but never actuates it. Use that for anything not yet wired.
 `capacity_kwh`, `inverter_kw` (the battery inverter's continuous rating),
 `max_charge_kw`, `reserve_pct` (the floor nothing may discharge below).
 
-### `fronius`: optional direct polling
+### Fronius inverters
 
-```yaml
-fronius:
-  enabled: true
-  hosts: ["192.168.1.21", "192.168.1.22"]
-  poll_seconds: 10
-  publish_to_ha: true     # requires mqtt.enabled
-```
-
-Not needed with `splink`, which already reads the inverters. Use this, the bridge
-or the Fronius HA integration; one is enough.
-
-Known GEN24 limitations:
+Add a Fronius inverter as a tile with the **Fronius (direct)** integration (or read
+it through the SP PRO bridge). Known GEN24 limitations:
 
 - `GetArchiveData.cgi` returns 404. The API is realtime-only, so history must be polled.
 - `DAY_ENERGY` and `YEAR_ENERGY` read null; only `TOTAL_ENERGY` populates.
@@ -206,6 +200,7 @@ Known GEN24 limitations:
   all null and there is no Storage device. SoC must come from the battery inverter.
 - When an off-grid battery inverter curtails them they become load-following, so
   `PAC` is *delivered* power, not available solar.
+- A sleeping inverter (at night) answers without `PAC`; that reads as 0 W.
 
 ### `mqtt`: optional bridge (add-on options)
 
