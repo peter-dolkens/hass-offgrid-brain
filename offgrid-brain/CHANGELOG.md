@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.24.1
+- The minute-by-minute recording no longer counts the minute a restart falls in
+  twice (the saved copy and the restarted brain's own). The repeat replaces it, and
+  repeats already in the saved file collapse on load. This could add a few extra
+  samples to an hourly log row and slightly inflate its kWh.
+
 ## 0.24.0
 - **Hourly log** for tuning the model: one row an hour in
   `history/hourly-<year>.jsonl` in the add-on's config folder.

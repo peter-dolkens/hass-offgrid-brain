@@ -36,7 +36,12 @@ class Recorder {
 
   static fromJSON(o, opts) {
     const r = new Recorder(opts);
-    if (o && Array.isArray(o.samples)) r.samples = o.samples.filter((s) => s && Number.isFinite(s.t));
+    if (o && Array.isArray(o.samples)) {
+      // One sample per minute: files saved before 0.24.1 can repeat the minute a restart fell in.
+      const byMinute = new Map();
+      for (const s of o.samples) if (s && Number.isFinite(s.t)) byMinute.set(s.t, s);
+      r.samples = [...byMinute.values()].sort((a, b) => a.t - b.t);
+    }
     return r;
   }
   toJSON() { return { samples: this.all() }; }
@@ -60,7 +65,11 @@ class Recorder {
   _close() {
     const c = this.cur, out = { t: c.t, run: c.run, shed: c.shed, flagged: c.flagged, floorPct: c.floorPct };
     for (const k of NUMS) out[k] = c.n[k] ? +(c.sum[k] / c.n[k]).toFixed(4) : null;
-    this.samples.push(out);
+    // After a restart the first minute is usually one the saved file already has:
+    // the newer sample replaces it rather than counting the minute twice.
+    const prev = this.samples[this.samples.length - 1];
+    if (prev && prev.t >= out.t) { if (prev.t === out.t) this.samples[this.samples.length - 1] = out; }
+    else this.samples.push(out);
     this.cur = null;
     const cutoff = out.t - this.keepMs;
     if (this.samples.length && this.samples[0].t < cutoff) this.samples = this.samples.filter((x) => x.t >= cutoff);

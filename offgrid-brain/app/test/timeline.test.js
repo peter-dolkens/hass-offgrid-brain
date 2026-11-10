@@ -35,6 +35,14 @@ t("recorder drops samples older than it keeps, and round-trips through a file", 
   assert.strictEqual(Recorder.load(f + ".missing").all().length, 0);
 });
 
+t("a restart's repeated minute replaces the saved one instead of counting twice", () => {
+  const r = Recorder.fromJSON({ samples: [{ t: T0, soc: 1 }, { t: T0 + MIN, soc: 2 }, { t: T0 + MIN, soc: 3 }] });
+  assert.deepStrictEqual(r.all().map((s) => s.soc), [1, 3], "duplicates in an old file collapse");
+  r.add(T0 + MIN + 5000, { soc: 4 });   // the restarted brain's first minute is the last saved one
+  r.add(T0 + 2 * MIN, { soc: 5 });
+  assert.deepStrictEqual(r.all().map((s) => [s.t - T0, s.soc]), [[0, 1], [MIN, 4], [2 * MIN, 5]]);
+});
+
 t("load profile is by hour of day, with fallbacks", () => {
   const p = loadProfile([{ t: T0, loadKw: 2 }, { t: T0 + 10 * MIN, loadKw: 4 }, { t: T0 + 2 * HOUR, loadKw: 1 }], 9);
   assert.strictEqual(p(T0 + 24 * HOUR + 5 * MIN), 3);
