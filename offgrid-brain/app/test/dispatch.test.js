@@ -211,18 +211,43 @@ t("hysteresis never reaches below the reserve, and 0 turns it off", () => {
   assert.strictEqual(decide(pol2, ctx({ pv: 0, soc: 39 }), { ...LIMITS, hysteresis_pct: 0 }, ["x"]).decisions[0].run, false);
 });
 
-t("full_pct: a 100% rung counts as reached at 99.x and passes the surplus down; its floor stays 100", () => {
+t("dwell: your examples, interpolated between, never past the last step", () => {
+  const { requiredSeconds } = require("../policy/dwell.js");
+  assert.strictEqual(requiredSeconds(0), 0);
+  assert.strictEqual(requiredSeconds(0.1), 60);
+  assert.ok(Math.abs(requiredSeconds(0.9) - (60 + (0.8 / 0.9) * 60)) < 1e-9);   // 99.1% -> ~113 s
+  assert.strictEqual(requiredSeconds(1), 120);
+  assert.strictEqual(requiredSeconds(2), 900);
+  assert.strictEqual(requiredSeconds(2.1), Infinity);
+});
+
+t("dwell: a rung counts as reached once the battery has stayed close long enough; a dip restarts it", () => {
+  const { reached } = require("../policy/dwell.js");
+  const s = (pts) => pts.map(([sec, soc]) => [sec * 1000, soc]);
+  assert.strictEqual(reached(100, s([[0, 99.9], [30, 99.9]])), false, "99.9% for 30 s: not yet");
+  assert.strictEqual(reached(100, s([[0, 99.9], [65, 99.9]])), true, "99.9% for 65 s");
+  assert.strictEqual(reached(100, s([[0, 98], [600, 98]])), false, "98% for 10 min: needs 15");
+  assert.strictEqual(reached(100, s([[0, 98], [910, 98]])), true, "98% for 15 min");
+  assert.strictEqual(reached(100, s([[0, 99.9], [40, 97.5], [100, 99.9]])), false, "a dip past 2% in the window");
+  assert.strictEqual(reached(100, s([[0, 97.5], [100, 99.9], [170, 99.9]])), true, "the dip is older than the 60 s it needs");
+  assert.strictEqual(reached(40, s([[0, 40.2]])), true, "at or above always counts");
+});
+
+t("dwell in the walk: a reached 100% rung passes the surplus down and lets loads below start on battery", () => {
   const pol = { devices: [{ id: "soak", kw: 3 }], list: [{ type: "charge", to: 100 }, { type: "load", dev: "soak", cond: "1" }] };
-  const L = { ...LIMITS, full_pct: 99, hysteresis_pct: 3 };
-  const r = decide(pol, ctx({ pv: 5, soc: 99.6 }), L, []);
-  assert.strictEqual(r.trace[0].outcome, "full");
-  assert.strictEqual(r.charge, 0, "no solar held back for the battery");
-  assert.strictEqual(r.decisions[0].run, true, "the surplus runs the load");
-  const before = decide(pol, ctx({ pv: 5, soc: 99.6 }), { ...LIMITS, full_pct: 100 }, []);
-  assert.ok(before.charge > 4.9 && !before.decisions[0].run, "without it the rung takes the sun");
-  const night = decide(pol, ctx({ pv: 0, soc: 99.6 }), L, []);
-  assert.strictEqual(night.decisions[0].run, false, "floor still 100: no starting on battery");
-  assert.strictEqual(night.trace[1].floorPct, 100);
+  const L = { ...LIMITS, hysteresis_pct: 3 };
+  const now = 10 * 60 * 1000, hist = [[now - 200000, 99.6], [now, 99.6]];   // 99.6% for 200 s: needs ~87 s
+  const sunny = decide(pol, ctx({ pv: 5, soc: 99.6 }), L, [], hist);
+  assert.strictEqual(sunny.trace[0].outcome, "full");
+  assert.strictEqual(sunny.trace[0].byDwell, true);
+  assert.strictEqual(sunny.charge, 0, "no solar held back for the battery");
+  assert.strictEqual(sunny.decisions[0].run, true);
+  const fresh = decide(pol, ctx({ pv: 5, soc: 99.6 }), L, [], [[now, 99.6]]);
+  assert.ok(fresh.charge > 4.9 && !fresh.decisions[0].run, "only just arrived: the rung still takes the sun");
+  const night = decide(pol, ctx({ pv: 0, soc: 99.6 }), L, [], hist);
+  assert.strictEqual(night.decisions[0].run, true, "reached by dwell: may start on the battery");
+  const low = decide(pol, ctx({ pv: 0, soc: 96 }), L, [], [[now - 2e6, 96], [now, 96]]);
+  assert.strictEqual(low.decisions[0].run, false, "4% below: never reached");
 });
 
 console.log(`\n${pass} passed`);

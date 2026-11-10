@@ -33,10 +33,23 @@ const { buildContext, LoadHistory } = require("./policy/context.js");
 const { Recorder, project, loadProfile, learnOverhead } = require("./policy/timeline.js");
 const { EnergyMeter } = require("./policy/meter.js");
 const { HourLog } = require("./policy/hourlog.js");
+const Dwell = require("./policy/dwell.js");
 const { startServer, savePolicy } = require("./web/server.js");
 const VERSION = require("./package.json").version;
 
 const STATE_PATH = "/data/brain-state.json";
+
+/* The battery as the brain uses it, after charge calibration: if wear means it now
+   only charges to N% of its original capacity, its usable capacity is N% of it. The
+   reported SoC is rescaled to match (rescaleSoc), so N% reads as 100% everywhere. */
+function calibrated(battery) {
+  const cal = Number.isFinite(battery.charge_calibration_pct) ? battery.charge_calibration_pct : 100;
+  return { ...battery, capacity_kwh: (battery.capacity_kwh * cal) / 100 };
+}
+function rescaleSoc(raw, battery) {
+  const cal = Number.isFinite(battery.charge_calibration_pct) ? battery.charge_calibration_pct : 100;
+  return Number.isFinite(raw) ? Math.min(100, (raw * 100) / cal) : raw;
+}
 const TIMELINE_PATH = "/data/timeline.json";
 // Forecast against actual, one row an hour, kept for good (backed up with the config).
 const HISTORY_DIR = process.env.HISTORY_DIR || "/config/history";
@@ -122,7 +135,7 @@ async function main() {
       actuator.dryRun = next.dry_run;
       if (prev) log.warn(`control mode changed from the web panel: ${next.dry_run ? "DRY RUN" : "LIVE CONTROL"}`);
     }
-    limits = { ...next.battery, tick_hours: next.tick_seconds / 3600 };
+    limits = { ...calibrated(next.battery), tick_hours: next.tick_seconds / 3600 };
     if (prev && changed("autonomy")) {
       history = LoadHistory.fromJSON(history.toJSON(), next.autonomy.window_days, next.autonomy.seed_load_kwh);
     }
@@ -159,22 +172,24 @@ async function main() {
   let snapshot = { starting: true, version: VERSION, dryRun: settings.dry_run };
   let lastCtx = null;
   let lastRunning = new Set();   // devices running after the last walk, for hysteresis
+  let socHistory = [];           // recent [ms, soc], for the dwell rule at charge rungs
   let lastTick = null;   // what the timeline's projection starts from
   function timeline() {
     const now = Date.now();
     const past = recorder.since(now - 24 * 3600 * 1000);
     const devices = policy.devices.map((d) => ({ id: d.id, name: d.name || d.id, kw: d.kw, important: d.important !== false }));
     const floors = [...new Set(policy.list.filter((e) => e.type === "charge" && e.to < 100).map((e) => e.to))].sort((a, b) => a - b);
-    const base = { now, from: now - 24 * 3600 * 1000, to: now + 24 * 3600 * 1000, battery: settings.battery, floors, devices, past };
+    const base = { now, from: now - 24 * 3600 * 1000, to: now + 24 * 3600 * 1000, battery: calibrated(settings.battery), floors, devices, past };
     if (!lastTick) return { ...base, future: [] };
     const overheadKw = learnOverhead(recorder.all());
     const future = project({
-      now, soc: lastTick.soc, ctx: lastTick.ctx, policy, limits, battery: settings.battery,
+      now, soc: lastTick.soc, ctx: lastTick.ctx, policy, limits, battery: calibrated(settings.battery),
       forecast: forecast.between(now - 3600 * 1000, now + 25 * 3600 * 1000),
       load: loadProfile(past, lastTick.loadKw),
       autonomy: lastTick.autonomy,
       overheadKw,
       running: lastRunning,
+      history: socHistory,
     });
     return { ...base, future, overheadKw, forecast: lastTick.forecast };
   }
@@ -189,7 +204,7 @@ async function main() {
     getState: () => snapshot,
     getPolicy: () => policy,
     check,
-    preview: (p) => (lastCtx ? summarise(decide(p, lastCtx, limits, lastRunning)) : null),
+    preview: (p) => (lastCtx ? summarise(decide(p, lastCtx, limits, lastRunning, socHistory)) : null),
     apply: (p) => { applyPolicy(p); runTick(); },   // show the new policy's decisions straight away
     settingsPath: Settings.SETTINGS_PATH,
     getSettings: () => settings,
@@ -218,7 +233,8 @@ async function main() {
 
   async function tick() {
     const now = new Date();
-    const { sources, battery } = settings;
+    const { sources } = settings;
+    const battery = calibrated(settings.battery);
     const tickSec = settings.tick_seconds;
     const dryRun = settings.dry_run;
 
@@ -242,7 +258,9 @@ async function main() {
 
     // The battery: SoC, house load, battery power and energy, through its integration.
     const batt = readBattery(battery, sp, ha);
-    const socEnt = pick([[batt.source, batt.soc]]);
+    // SoC as the brain uses it: rescaled by the charge calibration (a no-op at 100).
+    const socRaw = pick([[batt.source, batt.soc]]);
+    const socEnt = { ...socRaw, value: rescaleSoc(socRaw.value, settings.battery) };
     const loadEnt = pick([[batt.source, batt.loadKw]]);
     // With no inverters configured, fall back to the bridge's own PV total.
     const pvEnt = pick([["inverters", invSum], ["splink", inv.length ? null : sp.pvKw]]);
@@ -340,7 +358,12 @@ async function main() {
       battery,
     });
 
-    const result = decide(policy, ctx, limits, lastRunning);
+    if (socUsable) {
+      socHistory.push([now.getTime(), socEnt.value]);
+      const keep = now.getTime() - Dwell.horizonMs(battery.full_dwell);
+      while (socHistory.length && socHistory[0][0] < keep) socHistory.shift();
+    }
+    const result = decide(policy, ctx, limits, lastRunning, socUsable ? socHistory : []);
     lastRunning = new Set(result.decisions.filter((d) => d.run).map((d) => d.id));
     for (const e of result.errors) log.error(`policy expression: ${e}`);
 

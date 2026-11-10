@@ -162,7 +162,8 @@
   .dtile label { font-size: 12px; font-weight: 600; color: var(--muted); display: block; margin-bottom: 2px; }
   .dtile input, .dtile select { width: 100%; font: inherit; padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--text); }
   .dtile .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-  .dtile .rating { display: grid; grid-template-columns: 1fr auto 1fr auto auto; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .dtile .rating { display: grid; grid-template-columns: auto 1fr auto 1fr auto auto; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .dtile .rating > input:first-child { grid-column: 1 / 3; }
   .dtile .rating span { font-size: 12px; color: var(--muted); }
   .dtile .rating select { width: auto; }
   .dtile .hint { font-size: 11px; color: var(--muted); margin-top: 2px; }
@@ -336,6 +337,7 @@ function why(t) {
     if (t.outcome === "below") return `Battery below ${t.to}%, but no solar is left at this depth to charge it. Floor for entries below is now ${t.floorPct}%.`;
     return t.outcome === "charging"
       ? `Battery below ${t.to}%: charging at ${watts(t.chargeKw)}. Floor for entries below is now ${t.floorPct}%.`
+      : t.byDwell ? `Battery has stayed just below ${t.to}% long enough to count as reached. Floor for entries below is now ${t.floorPct}%, and they may start on the battery.`
       : `Battery at or above ${t.to}%. Floor for entries below is now ${t.floorPct}%.`;
   }
   switch (t.outcome) {
@@ -1212,7 +1214,15 @@ function renderBattery() {
     ${field("Integration", `<select data-k="source">${opts(BATT_SOURCES, b.source)}</select>`)}
     ${fields}
     <div class="row2">${field("Capacity (kWh)", numHtml("capacity_kwh", b.capacity_kwh))}${field("Reserve (%)", numHtml("reserve_pct", b.reserve_pct), "Nothing may discharge below this.")}</div>
-    <div class="row2">${field("Hysteresis (%)", numHtml("hysteresis_pct", b.hysteresis_pct), "A running load may keep using the battery this far below its floor, so loads don't flip on and off at a charge level.")}${field("Full at (%)", numHtml("full_pct", b.full_pct), "From here a \u201ccharge to 100%\u201d step counts as reached and passes spare sun to the loads below it.")}</div>
+    <div class="row2">${field("Hysteresis (%)", numHtml("hysteresis_pct", b.hysteresis_pct), "A running load may keep using the battery this far below its floor, so loads don't flip on and off at a charge level.")}${field("Charges to (%)", numHtml("charge_calibration_pct", b.charge_calibration_pct), "The most the battery can now reach (100 when new). Below 100, this reads and counts as 100% everywhere, and the usable capacity scales with it.")}</div>
+    <div><label>Counts as reached</label>
+      ${(b.full_dwell || []).map((d, i) => { const min = d.seconds >= 60 && d.seconds % 60 === 0;
+        return `<div class="rating"><span>within</span><input data-dw="${i}" data-f="pct" type="number" step="any" value="${d.below_pct == null ? "" : esc(d.below_pct)}"><span>% for</span>
+          <input data-dw="${i}" data-f="dur" type="number" step="any" value="${d.seconds == null ? "" : min ? d.seconds / 60 : d.seconds}">
+          <select data-dw="${i}" data-f="unit">${opts([["s", "s"], ["min", "min"]], min ? "min" : "s")}</select>
+          <button class="btn" data-dw="${i}" data-f="del" title="Remove">✕</button></div>`; }).join("")}
+      <button class="btn" id="dwell-add">Add step</button>
+      <div class="hint">A charge step (e.g. \u201ccharge to 100%\u201d) counts as reached once the battery has stayed this close to it this long. The deeper below, the longer it needs; between steps the time is interpolated.</div></div>
     <div class="row2">${field("Inverter (kW)", numHtml("inverter_kw", b.inverter_kw), "Continuous rating.")}${field("Max charge (kW)", numHtml("max_charge_kw", b.max_charge_kw))}</div>
     <div><label>Short-term ratings</label>
       ${(b.ratings || []).map((r, i) => { const min = r.seconds >= 60 && r.seconds % 60 === 0;
@@ -1237,6 +1247,17 @@ function renderBattery() {
     else el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => readRating(i));
   }
   $("rating-add").addEventListener("click", () => { b.ratings = [...(b.ratings || []), { kw: null, seconds: null }]; renderBattery(); });
+  const dwRow = (i) => [...$("batt-el").querySelectorAll(`[data-dw="${i}"]`)].reduce((o, el) => ({ ...o, [el.dataset.f]: el }), {});
+  const readDwell = (i) => {
+    const r = dwRow(i), pct = r.pct.value.trim(), dur = r.dur.value.trim();
+    b.full_dwell[i] = { below_pct: pct === "" ? null : Number(pct), seconds: dur === "" ? null : Math.round(Number(dur) * (r.unit.value === "min" ? 60 : 1)) };
+  };
+  for (const el of $("batt-el").querySelectorAll("[data-dw]")) {
+    const i = Number(el.dataset.dw);
+    if (el.dataset.f === "del") el.addEventListener("click", () => { b.full_dwell.splice(i, 1); renderBattery(); });
+    else el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => readDwell(i));
+  }
+  $("dwell-add").addEventListener("click", () => { b.full_dwell = [...(b.full_dwell || []), { below_pct: null, seconds: null }]; renderBattery(); });
 }
 
 function renderInverters() {
@@ -1315,7 +1336,8 @@ async function saveInverters() {
 }
 
 function loadTiles() {
-  battModel = { ...settingsSaved.battery, ratings: (settingsSaved.battery.ratings || []).map((r) => ({ ...r })) };
+  battModel = { ...settingsSaved.battery, ratings: (settingsSaved.battery.ratings || []).map((r) => ({ ...r })),
+    full_dwell: (settingsSaved.battery.full_dwell || []).map((d) => ({ ...d })) };
   invModel = ((settingsSaved.solar && settingsSaved.solar.inverters) || []).map((x) => ({ ...x }));
   renderBattery();
   renderInverters();

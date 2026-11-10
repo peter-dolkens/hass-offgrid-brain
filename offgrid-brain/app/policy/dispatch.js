@@ -23,6 +23,7 @@
    against the measured year is the policy that runs the house. */
 "use strict";
 const Expr = require("./expr.js");
+const Dwell = require("./dwell.js");
 
 // Must match sim.js VARS exactly, or policies are not portable between the two.
 const VARS = ["occ", "dark", "sun", "hour", "dow", "weekend", "month", "soc", "pv",
@@ -50,6 +51,7 @@ const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
    ctx     : runtime variables (see VARS) — soc is PERCENT, pv/surplus are kW
    limits  : { inverter_kw, max_charge_kw, reserve_pct, hysteresis_pct }
    running : ids of the devices running after the previous walk (optional)
+   history : recent [[epoch ms, soc], ...] ending now, for the dwell rule (optional)
    Returns : { decisions, charge, shed, budget, floorPct, errors, trace }
 
    HYSTERESIS. A device needs the battery above an entry's floor to START drawing on
@@ -58,10 +60,15 @@ const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
    battery would drop out at 99.9% under the 100% rung, or the moment a cloud passed,
    and come back a minute later.
 
+   DWELL. A rung also counts as REACHED once the battery has stayed just below it
+   long enough (limits.full_dwell, see dwell.js): a battery tapering at 99.x% isn't
+   left "charging" forever. A reached rung stops holding back solar for the battery,
+   and the entries below it may start on the battery, as they would at the rung.
+
    `decisions` carries one row per device with `run` (bool), the service level
    reached, and the REASON — which is what makes the add-on auditable rather
    than a black box flipping relays. */
-function decide(policy, ctx, limits, running) {
+function decide(policy, ctx, limits, running, history) {
   const hyst = Math.max(0, Number.isFinite(limits.hysteresis_pct) ? limits.hysteresis_pct : 0);
   const wasRunning = running instanceof Set ? running : new Set(running || []);
   const C = compiler();
@@ -70,6 +77,7 @@ function decide(policy, ctx, limits, running) {
 
   let budgetKw = Math.max(0, ctx.pv || 0);          // free solar first
   let floorPct = limits.reserve_pct;                 // hard battery reserve
+  let floorMet = false;                              // the floor's rung was reached by dwell
   let battKw = limits.inverter_kw;                   // discharge power still available
   const soc = ctx.soc;
 
@@ -84,27 +92,26 @@ function decide(policy, ctx, limits, running) {
     const e = policy.list[i];
 
     if (e.type === "charge") {
-      // A battery near full tapers to a trickle and may never read exactly 100%, so a
-      // rung at or above full_pct counts as reached from full_pct: it stops holding
-      // back solar the charger wouldn't take. Its floor for the entries below is
-      // still `to`: loads below "charge to 100" start on surplus, never on battery.
-      const target = Math.min(e.to, Number.isFinite(limits.full_pct) ? limits.full_pct : 100);
+      // Reached at the rung, or by dwelling just below it (see DWELL above).
+      const atRung = soc >= e.to;
+      const isReached = atRung || Dwell.reached(e.to, history, limits.full_dwell || Dwell.DEFAULT_CURVE);
       let ch = 0;
-      if (soc < target) {
+      if (!isReached) {
         // Mirrors sim.js's three-way cap: available power, the charger's ceiling, and
         // the headroom still left to the target. Without the third term a bank sitting
         // at 39.9% would claim full solar against a 40% rung and starve everything
         // below it, when a few watts would do.
-        const headroomKwh = ((target - soc) / 100) * limits.capacity_kwh;
+        const headroomKwh = ((e.to - soc) / 100) * limits.capacity_kwh;
         const headroomKw = headroomKwh / (limits.tick_hours || 1 / 120);
         ch = Math.max(0, Math.min(budgetKw, limits.max_charge_kw, headroomKw));
         chargeKw += ch;
         budgetKw -= ch;                              // charging competes with loads below
       }
-      if (e.to > floorPct) floorPct = e.to;          // becomes the floor for everything below
+      if (e.to > floorPct) { floorPct = e.to; floorMet = isReached && !atRung; }   // the floor for everything below
       // Below the target with nothing left to charge from is "below", not "charging".
       trace.push({ i, type: "charge", to: e.to, chargeKw: ch, floorPct,
-                   outcome: soc >= target ? "full" : ch > 0.001 ? "charging" : "below" });
+                   byDwell: isReached && !atRung,
+                   outcome: isReached ? "full" : ch > 0.001 ? "charging" : "below" });
       continue;
     }
     if (e.type !== "load") { trace.push({ i, type: e.type, outcome: "ignored" }); continue; }
@@ -130,8 +137,8 @@ function decide(policy, ctx, limits, running) {
     // Battery only above this entry's floor, or, for a device already running, above
     // the floor less the hysteresis band (but never the reserve).
     const holdFloor = wasRunning.has(e.dev) ? Math.max(limits.reserve_pct, floorPct - hyst) : floorPct;
-    const held = holdFloor < floorPct && soc <= floorPct && soc > holdFloor;
-    if (rem > 1e-9 && soc > holdFloor) {
+    const held = holdFloor < floorPct && soc <= floorPct && soc > holdFloor && !floorMet;
+    if (rem > 1e-9 && (soc > holdFloor || (floorMet && soc > limits.reserve_pct))) {
       fromBatt = Math.min(rem, battKw);
       battKw -= fromBatt;
       rem -= fromBatt;

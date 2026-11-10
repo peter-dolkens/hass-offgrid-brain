@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.27.0
+- **Dwell at charge rungs** replaces 0.26.0's flat "full at" threshold. A rung
+  counts as reached once the battery has stayed close enough to it for long enough,
+  longer the further below. By default 0.1% below for 60 s, 1% for 120 s and 2% for
+  15 min, interpolated between, never past the last step. A dip in the window counts
+  at its depth.
+  - A reached rung stops holding back solar, and the loads below it may start on the
+    battery, so the "charge to 100%" band works even though the battery tapers at
+    99.x%.
+  - Editable in Settings → Battery; the projection uses the same rule.
+- **Charge calibration** (Settings → Battery, "Charges to", default 100%). For when
+  wear means the battery only charges to e.g. 95%. The reported SoC is rescaled so
+  that reads as 100% throughout (gauges, timeline, rungs, autonomy, MQTT), and the
+  usable capacity scales to match.
+
 ## 0.26.0
 - **Full at** (Settings → Battery, `full_pct`, default 99%). A "charge to 100%"
   step counts as reached from here. Before, a battery tapering at 99.x% kept the

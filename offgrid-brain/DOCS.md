@@ -270,10 +270,15 @@ protection can't run.
 `hysteresis_pct` (default 3; a load already running may keep drawing the battery
 this far below its entry's floor, but never below the reserve, so loads don't flip
 on and off at a charge rung, e.g. sitting at 99.9% under "charge to 100%"),
-`full_pct` (default 99; a battery near full tapers to a trickle and may never read
-exactly 100%, so a rung at or above this counts as reached from here and stops
-holding back solar for the battery. Its floor stays at `to`, so loads below
-"charge to 100%" still start only on surplus, never on battery), and
+`full_dwell` (when a charge rung counts as reached: once the battery has stayed
+within each step's depth of it for that long, by default 0.1% for 60 s, 1% for
+120 s and 2% for 15 min, interpolated between, never past the last step. A
+reached rung stops holding back solar for the battery and lets the entries below
+it start on the battery, so a battery tapering at 99.x% still "reaches" 100%),
+`charge_calibration_pct` (default 100; if wear means the battery now only charges to
+N% of its original capacity, set N: the reported SoC is rescaled so N% reads and
+counts as 100% everywhere, and the usable capacity becomes N% of `capacity_kwh`),
+and
 optionally `ratings`, the short-term ratings above continuous as
 `[{ "kw": 8, "seconds": 3600 }, ...]`, which are marked on the Live load gauge. A
 longer duration must have a lower kW. An SP PRO 7.5 is 7.5 kW continuous, 8 kW for
