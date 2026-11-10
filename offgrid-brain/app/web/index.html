@@ -49,7 +49,9 @@
   /* Live: timeline over three gauges */
   .tl-bar { display: flex; gap: 8px 12px; align-items: center; flex-wrap: wrap; padding: 10px 14px 0; }
   .tl-time { font: 600 15px var(--mono); font-variant-numeric: tabular-nums; }
-  .tl-chart { padding: 6px 8px 0; touch-action: none; cursor: crosshair; }
+  /* Dragging across the chart scrubs; it must never start a text selection. */
+  .tl-chart { padding: 6px 8px 0; touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  .tl-chart svg text { pointer-events: none; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
   .seg button { font: inherit; font-size: 12px; font-weight: 600; border: 0; background: var(--card); color: var(--muted); padding: 6px 9px; cursor: pointer; font-variant-numeric: tabular-nums; }
   .seg button.on { background: var(--accent); color: #fff; }
@@ -797,7 +799,12 @@ function pick(t) {
 }
 for (const c of CHARTS) {
   const el = $(c.id);
-  el.addEventListener("pointerdown", (ev) => { if (!tl) return; dragging = true; el.setPointerCapture(ev.pointerId); pick(timeAtPointer(ev, c)); });
+  el.addEventListener("pointerdown", (ev) => {
+    if (!tl) return;
+    ev.preventDefault();   // no text selection or native drag while scrubbing
+    dragging = true; el.setPointerCapture(ev.pointerId); pick(timeAtPointer(ev, c));
+  });
+  el.addEventListener("selectstart", (ev) => ev.preventDefault());
   el.addEventListener("pointermove", (ev) => {
     if (!tl) return;
     const t = timeAtPointer(ev, c);

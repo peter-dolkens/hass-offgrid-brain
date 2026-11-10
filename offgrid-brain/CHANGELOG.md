@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.28.1
+- Live: dragging across the timeline no longer selects text or highlights the
+  chart. Scrubbing cancels the browser's text selection, including drags that
+  wander off the chart.
+
 ## 0.28.0
 - **Blocked irradiance sensor guard.** On 10 Nov at 12:53 the Ecowitt read
   20–50 W/m² for 7½ minutes, then 1,035 again, while an unthrottled array next door
