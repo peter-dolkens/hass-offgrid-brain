@@ -32,7 +32,7 @@ const DEFAULTS = Object.freeze({
     charge_calibration_pct: 100,
     // A rung counts as reached once the battery has stayed close to it long enough:
     // base_seconds * e^(growth * depth%^2). See policy/dwell.js.
-    full_dwell: { base_seconds: 60, growth: 0.7 },
+    full_dwell: { base_seconds: 59.6, growth: 0.656 },   // 0.1% -> 60 s, 2.5% -> 60 min
     // Short-term ratings above the continuous one: [{ kw, seconds }], e.g. an SP PRO
     // 7.5 does 8 kW for 60 min, 11.25 for 30 min, 13 for 60 s and 18 for 30 s.
     // Marked on the Live load gauge.
@@ -93,7 +93,7 @@ function upgradeBattery(out, from) {
   b.ratings = (Array.isArray(b.ratings) ? b.ratings : []).map((r) => ({ kw: r && r.kw, seconds: r && r.seconds }));
   delete b.full_pct;   // 0.26.0's flat threshold, replaced by full_dwell
   // 0.27.0 had a list of steps; the curve replaces it.
-  if (Array.isArray(b.full_dwell) || !b.full_dwell || typeof b.full_dwell !== "object") b.full_dwell = { base_seconds: 60, growth: 0.7 };
+  if (Array.isArray(b.full_dwell) || !b.full_dwell || typeof b.full_dwell !== "object") b.full_dwell = { base_seconds: 59.6, growth: 0.656 };
 }
 
 /** Older shapes of the inverter list, converted without needing live data:

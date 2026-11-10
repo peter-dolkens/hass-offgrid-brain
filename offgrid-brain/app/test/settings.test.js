@@ -203,7 +203,7 @@ t("battery: short-term ratings validate against continuous and each other", () =
 
 t("battery: 0.27.0's dwell steps become the curve; the curve validates", () => {
   const s = Settings.normalise({ battery: { full_dwell: [{ below_pct: 0.1, seconds: 60 }] } });
-  assert.deepStrictEqual(s.battery.full_dwell, { base_seconds: 60, growth: 0.7 });
+  assert.deepStrictEqual(s.battery.full_dwell, { base_seconds: 59.6, growth: 0.656 });
   s.battery.full_dwell = { base_seconds: -1, growth: 20 };
   const p = Settings.check(s).join(" | ");
   assert.ok(p.includes("dwell base time") && p.includes("dwell growth"), p);

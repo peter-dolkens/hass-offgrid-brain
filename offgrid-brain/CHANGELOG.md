@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.27.2
+- Dwell curve defaults retuned so 0.1% below a rung needs 60 s and 2.5% needs 60 min
+  (59.6 s, growth 0.656): 0.5% → 70 s, 1% → 1.9 min, 1.5% → 4.4 min, 2% → 13.7 min.
+
 ## 0.27.1
 - The dwell rule for charge rungs is a smooth curve instead of interpolated steps:
   `base_seconds × e^(growth × depth²)`, defaults 60 s and 0.7. That gives 0.1%

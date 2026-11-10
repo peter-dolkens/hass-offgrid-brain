@@ -7,8 +7,8 @@
 
      required seconds = base_seconds * e^(growth * depth^2),  depth in % below the rung
 
-   With the defaults (60 s, 0.7): 0.1% -> 60 s, 0.5% -> 71 s, 1% -> 2 min,
-   1.5% -> 4.8 min, 2% -> 16 min, 2.5% -> 1.3 h, 3% -> 9 h (in practice never).
+   With the defaults (59.6 s, 0.656), fitted so 0.1% -> 60 s and 2.5% -> 60 min:
+   0.5% -> 70 s, 1% -> 1.9 min, 1.5% -> 4.4 min, 2% -> 13.7 min, 3% -> ~6 h (never).
    Nearly flat close to the rung, so jitter at 99.8-99.9% barely matters; steep
    further down, fading into "never" without a hard cut-off.
 
@@ -18,7 +18,7 @@
    requires. A dip half way through restarts the clock at its own depth. */
 "use strict";
 
-const DEFAULT_CURVE = Object.freeze({ base_seconds: 60, growth: 0.7 });
+const DEFAULT_CURVE = Object.freeze({ base_seconds: 59.6, growth: 0.656 });
 const MAX_WINDOW_SEC = 2 * 3600;   // history kept; a dip needing longer never counts
 
 /** Seconds the battery must stay within `below` % of a rung. */
