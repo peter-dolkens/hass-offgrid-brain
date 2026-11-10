@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.23.2
+- Energy dashboard: the battery, load and generator counters are the SP PRO's own
+  daily counters again, turned into lifetime totals: every rise in the daily
+  figure is added, and when it resets at the SP PRO's midnight the new day's figure
+  is added plus the part of a step the old day never reported (estimated from live
+  power since its last step, at most one step). Live power no longer drives the
+  totals, so short-term fluctuations can't drift them, and energy counted while
+  the brain was down still arrives with the next reading. The totals carry on from
+  0.23.x without a drop.
+
 ## 0.23.1
 - Energy dashboard: generator energy is metered by the brain too, integrated from
   the SP PRO's generator power, so none of the published energy counters depend on

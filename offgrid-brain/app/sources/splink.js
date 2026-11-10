@@ -58,9 +58,8 @@ function parseBridge(doc, now = Date.now()) {
   }));
 
   // The SP PRO only exposes TODAY's energy, reset at its own midnight, by its own
-  // clock (which can be an hour or more out). The brain doesn't publish these: it
-  // meters battery, load and generator energy itself (policy/meter.js) and only uses
-  // these to start its meters from today's figures.
+  // clock (which can be an hour or more out). The brain doesn't publish them as they
+  // are: policy/meter.js turns them into lifetime counters, correcting the reset.
   const today = (spOk && sp.today) || {};
   const day = (v) => (spOk ? reading(v, sp.today_read_at, now) : NONE);
   const energy = {

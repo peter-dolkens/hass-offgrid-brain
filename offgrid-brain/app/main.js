@@ -90,8 +90,8 @@ async function main() {
   // The Live timeline's last day, one sample a minute. Written every few minutes,
   // not every tick: it's ~200 kB.
   const recorder = Recorder.load(TIMELINE_PATH);
-  // Lifetime battery and load energy, integrated from power (the bridge only has
-  // daily counters, which reset at the SP PRO's midnight).
+  // Lifetime battery, load and generator energy from the SP PRO's daily counters,
+  // corrected for their midnight reset (policy/meter.js).
   const meter = new EnergyMeter(saved.meter);
   const startedAt = Date.now();
   let timelineSavedAt = Date.now();
@@ -259,9 +259,10 @@ async function main() {
     const loadKw = Number.isFinite(loadEnt.value) && loadEnt.ageSec < STALE_SEC ? loadEnt.value : NaN;
     history.add(now.toISOString().slice(0, 10), loadKw, tickSec);
 
-    // Energy counters for the Energy dashboard. Through the bridge they come from the
-    // brain's own meters, started from the SP PRO's figures for today the first time
-    // so the switch doesn't look like a counter reset. An "ha" battery keeps its entities.
+    // Energy counters for the Energy dashboard. Through the bridge, the SP PRO's daily
+    // counters are turned into lifetime ones (its reset corrected); the first time
+    // they start from today's figures so the switch doesn't look like a counter
+    // reset. An "ha" battery keeps its own entities.
     let energy = batt.energy;
     if (battery.source === "bridge") {
       if (!meter.seeded) {
@@ -273,7 +274,9 @@ async function main() {
         }
       }
       const fresh = (r) => (r && r.ageSec < STALE_SEC ? r.value : NaN);
-      meter.add(now.getTime(), { batteryKw: fresh(batt.batteryKw), loadKw, generatorKw: fresh(batt.generatorKw) });
+      const e = batt.energy || {}, val = (k) => (e[k] ? e[k].value : NaN);
+      meter.add(now.getTime(), { batteryKw: fresh(batt.batteryKw), loadKw, generatorKw: fresh(batt.generatorKw) },
+        { batteryInKwh: val("batteryInKwh"), batteryOutKwh: val("batteryOutKwh"), loadKwh: val("loadKwh"), generatorKwh: val("generatorKwh") });
       const none = { value: NaN, ageSec: Infinity };
       energy = meter.seeded ? meter.readings() : { batteryInKwh: none, batteryOutKwh: none, loadKwh: none, generatorKwh: none };
     }
