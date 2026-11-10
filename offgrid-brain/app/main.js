@@ -158,6 +158,7 @@ async function main() {
   // decided in, so a candidate policy can be previewed against the same moment.
   let snapshot = { starting: true, version: VERSION, dryRun: settings.dry_run };
   let lastCtx = null;
+  let lastRunning = new Set();   // devices running after the last walk, for hysteresis
   let lastTick = null;   // what the timeline's projection starts from
   function timeline() {
     const now = Date.now();
@@ -173,6 +174,7 @@ async function main() {
       load: loadProfile(past, lastTick.loadKw),
       autonomy: lastTick.autonomy,
       overheadKw,
+      running: lastRunning,
     });
     return { ...base, future, overheadKw, forecast: lastTick.forecast };
   }
@@ -187,7 +189,7 @@ async function main() {
     getState: () => snapshot,
     getPolicy: () => policy,
     check,
-    preview: (p) => (lastCtx ? summarise(decide(p, lastCtx, limits)) : null),
+    preview: (p) => (lastCtx ? summarise(decide(p, lastCtx, limits, lastRunning)) : null),
     apply: (p) => { applyPolicy(p); runTick(); },   // show the new policy's decisions straight away
     settingsPath: Settings.SETTINGS_PATH,
     getSettings: () => settings,
@@ -338,7 +340,8 @@ async function main() {
       battery,
     });
 
-    const result = decide(policy, ctx, limits);
+    const result = decide(policy, ctx, limits, lastRunning);
+    lastRunning = new Set(result.decisions.filter((d) => d.run).map((d) => d.id));
     for (const e of result.errors) log.error(`policy expression: ${e}`);
 
     // Log at info only when what runs changes (and as a heartbeat); every tick at debug.

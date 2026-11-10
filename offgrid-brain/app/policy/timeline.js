@@ -144,7 +144,8 @@ function forecastAt(hourly) {
  *   autonomy     { expectedLoadKwh, forecastKwh } for each step's autonomy
  *   overheadKw   the inverter's own draw, on top of the load (learnOverhead)
  */
-function project({ now, soc, ctx, policy, limits, battery, forecast, load, autonomy = {}, overheadKw = 0, hours = 24, stepMin = 30 }) {
+function project({ now, soc, ctx, policy, limits, battery, forecast, load, autonomy = {}, overheadKw = 0, running = [], hours = 24, stepMin = 30 }) {
+  let wasRunning = new Set(running);   // hysteresis carries from step to step, as it does tick to tick
   const pvAt = forecastAt(forecast || []);
   const stepH = stepMin / 60, cap = battery.capacity_kwh, reserve = battery.reserve_pct;
   const out = [];
@@ -161,7 +162,8 @@ function project({ now, soc, ctx, policy, limits, battery, forecast, load, auton
       surplus: Math.max(0, pv - loadKw),
       autonomy: autonomyOf({ socPct: s, capacityKwh: cap, reservePct: reserve, ...autonomy }),
     };
-    const r = decide(policy, c, limits);
+    const r = decide(policy, c, limits, wasRunning);
+    wasRunning = new Set(r.decisions.filter((x) => x.run).map((x) => x.id));
     const chargeRoom = s < 99.5 ? battery.max_charge_kw : 0;
     const used = Math.min(pv, loadKw + overheadKw + chargeRoom);
     const battKw = used - loadKw - overheadKw;

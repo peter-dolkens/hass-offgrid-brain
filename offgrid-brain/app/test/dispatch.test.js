@@ -191,4 +191,24 @@ t("an important entry going unserved flags the device; a convenience entry alone
   assert.deepStrictEqual(decide(pol, ctx({ pv: 0, soc: 50, gap: 12 }), LIMITS).flagged.map((d) => d.id), ["office"]);
 });
 
+t("hysteresis: a running load holds through a dip below its floor; a stopped one doesn't start", () => {
+  const pol = { devices: [{ id: "ac", kw: 2 }], list: [{ type: "charge", to: 100 }, { type: "load", dev: "ac", cond: "1" }] };
+  const L = { ...LIMITS, hysteresis_pct: 3 };
+  const at = (soc, running) => decide(pol, ctx({ pv: 0, soc }), L, running).decisions[0];
+  assert.strictEqual(at(99.8, []).run, false, "off, and below the 100% floor: can't start on battery");
+  assert.strictEqual(at(99.8, ["ac"]).run, true, "running: holds at 99.8%");
+  assert.strictEqual(at(97.5, ["ac"]).run, true, "still inside the 3% band");
+  assert.strictEqual(at(96.9, ["ac"]).run, false, "below 97%: shed");
+  const tr = decide(pol, ctx({ pv: 0, soc: 99.8 }), L, ["ac"]).trace[1];
+  assert.ok(tr.held && tr.holdFloorPct === 97, JSON.stringify(tr));
+});
+
+t("hysteresis never reaches below the reserve, and 0 turns it off", () => {
+  const pol = { devices: [{ id: "x", kw: 1 }], list: [{ type: "load", dev: "x", cond: "1" }] };
+  const at = (soc, h) => decide(pol, ctx({ pv: 0, soc }), { ...LIMITS, hysteresis_pct: h }, ["x"]).decisions[0].run;
+  assert.strictEqual(at(9.5, 3), false, "reserve 10%: no hold below it");
+  const pol2 = { devices: [{ id: "x", kw: 1 }], list: [{ type: "charge", to: 40 }, { type: "load", dev: "x", cond: "1" }] };
+  assert.strictEqual(decide(pol2, ctx({ pv: 0, soc: 39 }), { ...LIMITS, hysteresis_pct: 0 }, ["x"]).decisions[0].run, false);
+});
+
 console.log(`\n${pass} passed`);

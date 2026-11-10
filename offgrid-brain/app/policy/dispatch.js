@@ -48,13 +48,22 @@ const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 
    policy  : { devices: [...], list: [...] }
    ctx     : runtime variables (see VARS) — soc is PERCENT, pv/surplus are kW
-   limits  : { inverter_kw, max_charge_kw, reserve_pct }
+   limits  : { inverter_kw, max_charge_kw, reserve_pct, hysteresis_pct }
+   running : ids of the devices running after the previous walk (optional)
    Returns : { decisions, charge, shed, budget, floorPct, errors, trace }
+
+   HYSTERESIS. A device needs the battery above an entry's floor to START drawing on
+   it, but one already running may keep drawing down to the floor minus
+   hysteresis_pct (never below the reserve). Without it a load that came on at a full
+   battery would drop out at 99.9% under the 100% rung, or the moment a cloud passed,
+   and come back a minute later.
 
    `decisions` carries one row per device with `run` (bool), the service level
    reached, and the REASON — which is what makes the add-on auditable rather
    than a black box flipping relays. */
-function decide(policy, ctx, limits) {
+function decide(policy, ctx, limits, running) {
+  const hyst = Math.max(0, Number.isFinite(limits.hysteresis_pct) ? limits.hysteresis_pct : 0);
+  const wasRunning = running instanceof Set ? running : new Set(running || []);
   const C = compiler();
   const dev = {};
   for (const d of policy.devices) dev[d.id] = d;
@@ -113,7 +122,11 @@ function decide(policy, ctx, limits) {
     let rem = inc - fromPv;
 
     let fromBatt = 0;
-    if (rem > 1e-9 && soc > floorPct) {               // battery only above this entry's floor
+    // Battery only above this entry's floor, or, for a device already running, above
+    // the floor less the hysteresis band (but never the reserve).
+    const holdFloor = wasRunning.has(e.dev) ? Math.max(limits.reserve_pct, floorPct - hyst) : floorPct;
+    const held = holdFloor < floorPct && soc <= floorPct && soc > holdFloor;
+    if (rem > 1e-9 && soc > holdFloor) {
       fromBatt = Math.min(rem, battKw);
       battKw -= fromBatt;
       rem -= fromBatt;
@@ -134,6 +147,7 @@ function decide(policy, ctx, limits) {
 
     const prev = result[e.dev];
     trace.push({ ...row, demandKw: demand, incKw: inc, fromPvKw: fromPv, fromBattKw: fromBatt, shortKw: rem,
+                 held: held && fromBatt > 0, holdFloorPct: holdFloor,
                  outcome: ok ? "granted" : unbacked ? "deficit" : (prev && prev.run) ? "partial" : "shed" });
     // A device RUNS if any entry granted it power. Deeper entries only improve service.
     result[e.dev] = {

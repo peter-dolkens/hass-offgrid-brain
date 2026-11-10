@@ -341,7 +341,8 @@ function why(t) {
   switch (t.outcome) {
     case "idle": return "Its condition is 0 right now, so it isn't asking to run.";
     case "already-served": return "An earlier entry already gave it this much.";
-    case "granted": return `Granted ${watts(t.incKw)}: ${watts(t.fromPvKw)} solar + ${watts(t.fromBattKw)} battery.`;
+    case "granted": return `Granted ${watts(t.incKw)}: ${watts(t.fromPvKw)} solar + ${watts(t.fromBattKw)} battery.`
+      + (t.held ? ` Already running, so it keeps using the battery down to ${fmt(t.holdFloorPct, 0)}% (its ${t.floorPct}% floor less the hysteresis).` : "");
     case "partial": return `This deeper service level wasn't reached (short ${watts(t.shortKw)}); it runs at a lower level.`;
     case "shed": return `Short ${watts(t.shortKw)}. The battery can't go below this entry's ${t.floorPct}% floor.${t.important ? "" : " Not marked important, so it's held back rather than flagged."}`;
     case "deficit": return `Short ${watts(t.shortKw)}, but it can't be shed (gen-backed), so it keeps running.`;
@@ -1211,6 +1212,7 @@ function renderBattery() {
     ${field("Integration", `<select data-k="source">${opts(BATT_SOURCES, b.source)}</select>`)}
     ${fields}
     <div class="row2">${field("Capacity (kWh)", numHtml("capacity_kwh", b.capacity_kwh))}${field("Reserve (%)", numHtml("reserve_pct", b.reserve_pct), "Nothing may discharge below this.")}</div>
+    <div class="row2">${field("Hysteresis (%)", numHtml("hysteresis_pct", b.hysteresis_pct), "A running load may keep using the battery this far below its floor, so loads don't flip on and off at a charge level.")}<div></div></div>
     <div class="row2">${field("Inverter (kW)", numHtml("inverter_kw", b.inverter_kw), "Continuous rating.")}${field("Max charge (kW)", numHtml("max_charge_kw", b.max_charge_kw))}</div>
     <div><label>Short-term ratings</label>
       ${(b.ratings || []).map((r, i) => { const min = r.seconds >= 60 && r.seconds % 60 === 0;

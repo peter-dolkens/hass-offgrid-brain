@@ -266,7 +266,10 @@ protection can't run.
 ### `battery`
 
 `capacity_kwh`, `inverter_kw` (the battery inverter's continuous rating),
-`max_charge_kw`, `reserve_pct` (the floor nothing may discharge below), and
+`max_charge_kw`, `reserve_pct` (the floor nothing may discharge below),
+`hysteresis_pct` (default 3; a load already running may keep drawing the battery
+this far below its entry's floor, but never below the reserve, so loads don't flip
+on and off at a charge rung, e.g. sitting at 99.9% under "charge to 100%"), and
 optionally `ratings`, the short-term ratings above continuous as
 `[{ "kw": 8, "seconds": 3600 }, ...]`, which are marked on the Live load gauge. A
 longer duration must have a lower kW. An SP PRO 7.5 is 7.5 kW continuous, 8 kW for

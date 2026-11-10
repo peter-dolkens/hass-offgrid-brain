@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.25.0
+- **Hysteresis at charge rungs.** A load needs the battery above its entry's floor
+  to start drawing on it, but once running it may keep drawing down to the floor
+  less `hysteresis_pct` (Settings → Battery, default 3%, never below the reserve).
+  A load that came on with a full battery no longer drops out at 99.9% under
+  "charge to 100%", or when a cloud passes, only to return a minute later. The
+  dispatch list says when a load is being held this way, and the 24 h projection
+  applies the same rule.
+
 ## 0.24.1
 - The minute-by-minute recording no longer counts the minute a restart falls in
   twice (the saved copy and the restarted brain's own). The repeat replaces it, and
