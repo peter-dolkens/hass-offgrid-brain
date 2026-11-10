@@ -84,13 +84,18 @@ function decide(policy, ctx, limits, running) {
     const e = policy.list[i];
 
     if (e.type === "charge") {
+      // A battery near full tapers to a trickle and may never read exactly 100%, so a
+      // rung at or above full_pct counts as reached from full_pct: it stops holding
+      // back solar the charger wouldn't take. Its floor for the entries below is
+      // still `to`: loads below "charge to 100" start on surplus, never on battery.
+      const target = Math.min(e.to, Number.isFinite(limits.full_pct) ? limits.full_pct : 100);
       let ch = 0;
-      if (soc < e.to) {
+      if (soc < target) {
         // Mirrors sim.js's three-way cap: available power, the charger's ceiling, and
         // the headroom still left to the target. Without the third term a bank sitting
         // at 39.9% would claim full solar against a 40% rung and starve everything
         // below it, when a few watts would do.
-        const headroomKwh = ((e.to - soc) / 100) * limits.capacity_kwh;
+        const headroomKwh = ((target - soc) / 100) * limits.capacity_kwh;
         const headroomKw = headroomKwh / (limits.tick_hours || 1 / 120);
         ch = Math.max(0, Math.min(budgetKw, limits.max_charge_kw, headroomKw));
         chargeKw += ch;
@@ -99,7 +104,7 @@ function decide(policy, ctx, limits, running) {
       if (e.to > floorPct) floorPct = e.to;          // becomes the floor for everything below
       // Below the target with nothing left to charge from is "below", not "charging".
       trace.push({ i, type: "charge", to: e.to, chargeKw: ch, floorPct,
-                   outcome: soc >= e.to ? "full" : ch > 0.001 ? "charging" : "below" });
+                   outcome: soc >= target ? "full" : ch > 0.001 ? "charging" : "below" });
       continue;
     }
     if (e.type !== "load") { trace.push({ i, type: e.type, outcome: "ignored" }); continue; }

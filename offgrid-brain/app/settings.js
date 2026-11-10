@@ -26,6 +26,9 @@ const DEFAULTS = Object.freeze({
     // A running load may keep drawing the battery this far below its entry's floor,
     // so loads don't flip on and off at a charge rung (e.g. 99.9% under "charge to 100%").
     hysteresis_pct: 3,
+    // The battery counts as full from here: a "charge to 100%" rung stops holding back
+    // solar once it's reached, as the charger tapers to a trickle near the top.
+    full_pct: 99,
     // Short-term ratings above the continuous one: [{ kw, seconds }], e.g. an SP PRO
     // 7.5 does 8 kW for 60 min, 11.25 for 30 min, 13 for 60 s and 18 for 30 s.
     // Marked on the Live load gauge.
@@ -152,6 +155,7 @@ function check(s) {
   }
   if (!num(b.reserve_pct, 0, 50)) p.push("reserve must be 0-50%");
   if (!num(b.hysteresis_pct, 0, 20)) p.push("hysteresis must be 0-20%");
+  if (!num(b.full_pct, 80, 100)) p.push("full at must be 80-100%");
   const a = s.autonomy || {};
   if (!num(a.seed_load_kwh, 0, 10000)) p.push("autonomy seed load must be >= 0 kWh");
   if (!num(a.window_days, 1, 30) || !Number.isInteger(a.window_days)) p.push("autonomy window must be 1-30 whole days");

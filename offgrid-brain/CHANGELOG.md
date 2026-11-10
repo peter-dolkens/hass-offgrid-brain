@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.26.0
+- **Full at** (Settings → Battery, `full_pct`, default 99%). A "charge to 100%"
+  step counts as reached from here. Before, a battery tapering at 99.x% kept the
+  step "charging" and holding back up to the full charge rate of solar, starving
+  the loads below it of surplus the charger wasn't taking. The step's floor is
+  unchanged: loads below it still start only on surplus, and with hysteresis, once
+  running, may use the battery down to 97%.
+
 ## 0.25.0
 - **Hysteresis at charge rungs.** A load needs the battery above its entry's floor
   to start drawing on it, but once running it may keep drawing down to the floor

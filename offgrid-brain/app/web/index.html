@@ -1212,7 +1212,7 @@ function renderBattery() {
     ${field("Integration", `<select data-k="source">${opts(BATT_SOURCES, b.source)}</select>`)}
     ${fields}
     <div class="row2">${field("Capacity (kWh)", numHtml("capacity_kwh", b.capacity_kwh))}${field("Reserve (%)", numHtml("reserve_pct", b.reserve_pct), "Nothing may discharge below this.")}</div>
-    <div class="row2">${field("Hysteresis (%)", numHtml("hysteresis_pct", b.hysteresis_pct), "A running load may keep using the battery this far below its floor, so loads don't flip on and off at a charge level.")}<div></div></div>
+    <div class="row2">${field("Hysteresis (%)", numHtml("hysteresis_pct", b.hysteresis_pct), "A running load may keep using the battery this far below its floor, so loads don't flip on and off at a charge level.")}${field("Full at (%)", numHtml("full_pct", b.full_pct), "From here a \u201ccharge to 100%\u201d step counts as reached and passes spare sun to the loads below it.")}</div>
     <div class="row2">${field("Inverter (kW)", numHtml("inverter_kw", b.inverter_kw), "Continuous rating.")}${field("Max charge (kW)", numHtml("max_charge_kw", b.max_charge_kw))}</div>
     <div><label>Short-term ratings</label>
       ${(b.ratings || []).map((r, i) => { const min = r.seconds >= 60 && r.seconds % 60 === 0;

@@ -211,4 +211,18 @@ t("hysteresis never reaches below the reserve, and 0 turns it off", () => {
   assert.strictEqual(decide(pol2, ctx({ pv: 0, soc: 39 }), { ...LIMITS, hysteresis_pct: 0 }, ["x"]).decisions[0].run, false);
 });
 
+t("full_pct: a 100% rung counts as reached at 99.x and passes the surplus down; its floor stays 100", () => {
+  const pol = { devices: [{ id: "soak", kw: 3 }], list: [{ type: "charge", to: 100 }, { type: "load", dev: "soak", cond: "1" }] };
+  const L = { ...LIMITS, full_pct: 99, hysteresis_pct: 3 };
+  const r = decide(pol, ctx({ pv: 5, soc: 99.6 }), L, []);
+  assert.strictEqual(r.trace[0].outcome, "full");
+  assert.strictEqual(r.charge, 0, "no solar held back for the battery");
+  assert.strictEqual(r.decisions[0].run, true, "the surplus runs the load");
+  const before = decide(pol, ctx({ pv: 5, soc: 99.6 }), { ...LIMITS, full_pct: 100 }, []);
+  assert.ok(before.charge > 4.9 && !before.decisions[0].run, "without it the rung takes the sun");
+  const night = decide(pol, ctx({ pv: 0, soc: 99.6 }), L, []);
+  assert.strictEqual(night.decisions[0].run, false, "floor still 100: no starting on battery");
+  assert.strictEqual(night.trace[1].floorPct, 100);
+});
+
 console.log(`\n${pass} passed`);
