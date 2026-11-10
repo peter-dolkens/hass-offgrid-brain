@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.24.0
+- **Hourly log** for tuning the model: one row an hour in
+  `history/hourly-<year>.jsonl` in the add-on's config folder.
+  - The solar forecast for the hour as it stood a day, 6 hours and just before.
+  - The battery % the brain projected for the hour's end, a day and 6 hours ahead.
+  - The actuals: irradiance, outdoor temperature, solar delivered and available,
+    load, battery in and out, battery %, minutes throttled.
+  - The DC string voltage: mean, peak and first light.
+
+  New `GET /api/history?days=N`.
+- Outdoor temperature comes from the Ecowitt gateway when no entity is mapped.
+- The bridge's Fronius readings now include the mean DC string voltage.
+
 ## 0.23.2
 - Energy dashboard: the battery, load and generator counters are the SP PRO's own
   daily counters again, turned into lifetime totals: every rise in the daily

@@ -32,11 +32,14 @@ const { decide } = require("./policy/dispatch.js");
 const { buildContext, LoadHistory } = require("./policy/context.js");
 const { Recorder, project, loadProfile, learnOverhead } = require("./policy/timeline.js");
 const { EnergyMeter } = require("./policy/meter.js");
+const { HourLog } = require("./policy/hourlog.js");
 const { startServer, savePolicy } = require("./web/server.js");
 const VERSION = require("./package.json").version;
 
 const STATE_PATH = "/data/brain-state.json";
 const TIMELINE_PATH = "/data/timeline.json";
+// Forecast against actual, one row an hour, kept for good (backed up with the config).
+const HISTORY_DIR = process.env.HISTORY_DIR || "/config/history";
 const TIMELINE_SAVE_MS = 5 * 60 * 1000;
 
 function loadState() {
@@ -93,6 +96,8 @@ async function main() {
   // Lifetime battery, load and generator energy from the SP PRO's daily counters,
   // corrected for their midnight reset (policy/meter.js).
   const meter = new EnergyMeter(saved.meter);
+  const hourLog = new HourLog({ dir: HISTORY_DIR, state: saved.hourlog });
+  let loggedHour = null;
   const startedAt = Date.now();
   let timelineSavedAt = Date.now();
 
@@ -196,6 +201,7 @@ async function main() {
     },
     listEntities: () => ha.listEntities(),
     getTimeline: timeline,
+    getHistory: (days) => hourLog.read(days),
   });
 
   // ---- tick ----------------------------------------------------------------
@@ -239,7 +245,8 @@ async function main() {
     // With no inverters configured, fall back to the bridge's own PV total.
     const pvEnt = pick([["inverters", invSum], ["splink", inv.length ? null : sp.pvKw]]);
     const pvAge = pvEnt.ageSec;
-    const toutEnt = ha.number(sources.outdoor_temp);
+    // Outdoor temperature: a mapped entity, else the Ecowitt gateway's own reading.
+    const toutEnt = pick([["ha", ha.number(sources.outdoor_temp)], ["ecowitt", settings.ecowitt.enabled ? ecowitt.outdoorTemp : null]]);
     // Solar forecast: a mapped entity overrides; otherwise HA's Energy forecasts.
     const fcEnt = ha.energyKwh(sources.pv_forecast_today);
     const fc = forecast.read(now.getTime());
@@ -361,6 +368,8 @@ async function main() {
     const battKw = batt.batteryKw.ageSec < STALE_SEC ? batt.batteryKw.value : NaN;
     recorder.add(now.getTime(), {
       soc: socUsable ? socEnt.value : NaN, loadKw, pvKw: pvDelivered, availKw: pvAvailable, battKw,
+      irr: irradiance, tout: Number.isFinite(toutEnt.value) && toutEnt.ageSec < 30 * 60 ? toutEnt.value : NaN,
+      dcV: (() => { const v = inv.map((i) => (i.dcVolts && i.dcVolts.ageSec < STALE_SEC ? i.dcVolts.value : NaN)).filter(Number.isFinite); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN; })(),
       run: result.decisions.filter((d) => d.run).map((d) => d.id), shed: result.shed.map((d) => d.id),
       flagged: result.flagged.map((d) => d.id), floorPct: result.floorPct,
     });
@@ -385,9 +394,20 @@ async function main() {
       forecast: snapshot.forecast,
     };
 
+    // The hourly log: remember each forecast's view of the hours ahead; once an hour,
+    // write the hours that have ended and note the projection from here.
+    hourLog.noteForecast(now.getTime(), forecast.between(now.getTime(), now.getTime() + 48 * 3600 * 1000));
+    const hourNow = Math.floor(now.getTime() / 3600000);
+    if (hourNow !== loggedHour) {
+      loggedHour = hourNow;
+      const rows = hourLog.closeHours(now.getTime(), recorder.all());
+      if (rows.length) log.debug(`hourly log: wrote ${rows.map((r) => r.local).join(", ")}`);
+      try { hourLog.noteProjection(now.getTime(), timeline().future); } catch (e) { log.warn("could not note the projection", e.message); }
+    }
+
     await actuator.apply(result.decisions);
     mqttSink.publishTick({ ctx, result, safeMode, dryRun, inputs: snapshot.inputs, solar });
-    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), updated: now.toISOString() });
+    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), hourlog: hourLog.toJSON(), updated: now.toISOString() });
   }
 
   applySettings(settings);
@@ -395,7 +415,7 @@ async function main() {
 
   process.on("SIGTERM", () => {
     log.info("shutting down");
-    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON() });
+    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), hourlog: hourLog.toJSON() });
     recorder.save(TIMELINE_PATH);
     process.exit(0);
   });

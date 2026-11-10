@@ -45,10 +45,10 @@ class InverterSet {
   read(bridge = {}) {
     const now = Date.now();
     return this.list.map((c) => {
-      let powerKw = NONE, energyKwh = NONE, reportedKwp = NaN;
+      let powerKw = NONE, energyKwh = NONE, reportedKwp = NaN, dcVolts = NONE;
       if (c.source === "bridge") {
         const b = (bridge.inverters || []).find((i) => i.key === c.bridge_key);
-        if (b) { powerKw = b.powerKw; energyKwh = b.energyKwh; reportedKwp = b.kwp; }
+        if (b) { powerKw = b.powerKw; energyKwh = b.energyKwh; reportedKwp = b.kwp; dcVolts = b.dcVolts || NONE; }
       } else if (c.source === "fronius") {
         const p = this.pollers.get(c.id);
         const v = p && p.poller.inverters.get(c.host);
@@ -65,7 +65,7 @@ class InverterSet {
       return {
         id: c.id, key: c.id, name: c.name, source: c.source,
         live: c.source !== "none",
-        powerKw, energyKwh,
+        powerKw, energyKwh, dcVolts,
         reportedKwp,
         kwp: c.kwp || reportedKwp,
         acKw: c.ac_kw || NaN,

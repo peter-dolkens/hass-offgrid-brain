@@ -9,6 +9,7 @@
      GET  /                   the UI
      GET  /api/state          last tick: inputs, context, decisions, per-entry trace
      GET  /api/timeline       the last 24 h as recorded, the next 24 h as projected
+     GET  /api/history?days=N the hourly log: forecast against actual, last N days
      GET  /api/policy         the policy in force
      POST /api/policy/check   validate a candidate and preview it against the last tick
      PUT  /api/policy         validate, save to policy.json, and apply immediately
@@ -91,6 +92,10 @@ function startServer(o) {
         case "GET /":
         case "GET /index.html":
           return send(res, 200, fs.readFileSync(INDEX, "utf8"), "text/html");
+        case "GET /api/history": {
+          const days = Math.max(1, Math.min(366, Number(url.searchParams.get("days")) || 7));
+          return send(res, 200, { days, rows: o.getHistory ? o.getHistory(days) : [] });
+        }
         case "GET /api/timeline":
           return send(res, 200, o.getTimeline ? o.getTimeline() : { past: [], future: [] });
         case "GET /api/state":

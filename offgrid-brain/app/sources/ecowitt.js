@@ -31,12 +31,21 @@ function parseIrradiance(doc) {
   return NaN;   // fc or anything unexpected: better unknown than wrong
 }
 
+/** Outdoor temperature in °C (common_list "0x02"), or NaN. Converts °F. */
+function parseOutdoorTemp(doc) {
+  const item = doc && Array.isArray(doc.common_list) ? doc.common_list.find((x) => x.id === "0x02") : null;
+  const v = item ? parseFloat(item.val) : NaN;
+  if (!Number.isFinite(v)) return NaN;
+  return /f/i.test(item.unit || "") ? ((v - 32) * 5) / 9 : v;
+}
+
 class EcowittPoller {
   constructor({ urls, pollSeconds, timeoutMs }) {
     this.urls = (urls || []).filter(Boolean);
     this.pollSeconds = pollSeconds || 10;
     this.timeoutMs = timeoutMs || 5000;
     this.value = NaN;
+    this.temp = NaN;   // outdoor °C, from the same read
     this.at = 0;
     this.failing = false;
     this.timer = null;
@@ -44,6 +53,10 @@ class EcowittPoller {
 
   get irradiance() {
     return Number.isFinite(this.value) ? { value: this.value, ageSec: (Date.now() - this.at) / 1000 } : NONE;
+  }
+
+  get outdoorTemp() {
+    return Number.isFinite(this.temp) ? { value: this.temp, ageSec: (Date.now() - this.at) / 1000 } : NONE;
   }
 
   async pollOnce() {
@@ -54,9 +67,11 @@ class EcowittPoller {
       try {
         const r = await fetch(new URL("get_livedata_info", url).href, { signal: ac.signal });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const v = parseIrradiance(await r.json());
+        const doc = await r.json();
+        const v = parseIrradiance(doc);
         if (!Number.isFinite(v)) throw new Error("no solar radiation (0x15) in the gateway's live data");
         this.value = v;
+        this.temp = parseOutdoorTemp(doc);
         this.at = Date.now();
         if (this.failing) log.info(`ecowitt: irradiance reads recovered (${url})`);
         this.failing = false;
@@ -81,4 +96,4 @@ class EcowittPoller {
   stop() { if (this.timer) clearInterval(this.timer); }
 }
 
-module.exports = { EcowittPoller, parseIrradiance };
+module.exports = { EcowittPoller, parseIrradiance, parseOutdoorTemp };

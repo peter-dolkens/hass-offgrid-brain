@@ -26,6 +26,8 @@ function reading(value, atIso, now) {
   return { value, ageSec: Math.max(0, (now - at) / 1000) };
 }
 
+const meanOf = (xs) => { const v = xs.filter(Number.isFinite); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN; };
+
 /** Extract the brain's inputs from one bridge document. Pure, for testing. */
 function parseBridge(doc, now = Date.now()) {
   const sp = doc && doc.sp_pro;
@@ -55,6 +57,9 @@ function parseBridge(doc, now = Date.now()) {
     kwp: Number.isFinite(i.rated_watts) ? i.rated_watts / 1000 : NaN,
     powerKw: i.healthy && i.ac ? reading(i.ac.power_watts / 1000, i.taken_at, now) : NONE,
     energyKwh: i.healthy && i.energy ? reading(i.energy.total_wh / 1000, i.taken_at, now) : NONE,
+    // Mean DC string voltage. It rises with first light before the inverter starts
+    // delivering, and sits up towards open-circuit when the inverter is throttled.
+    dcVolts: i.healthy ? reading(meanOf((i.strings || []).map((s) => s.volts)), i.taken_at, now) : NONE,
   }));
 
   // The SP PRO only exposes TODAY's energy, reset at its own midnight, by its own

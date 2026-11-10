@@ -187,11 +187,31 @@ ecowitt:
 Reads solar radiation (`0x15`) from the gateway's local API (`/get_livedata_info`).
 It needs a solar sensor on the gateway, such as a WS90.
 
+### The hourly log: forecast against actual
+
+Once an hour the brain writes a row to `history/hourly-<year>.jsonl` in its config
+folder (`/addon_configs/<slug>_offgrid_brain/`, included in Home Assistant backups),
+for tuning the model. Each row has:
+
+- **forecast:** the solar forecast's kWh for that hour as it stood at least 24 h
+  before (`d1`), at least 6 h before (`h6`) and just before the hour began (`last`);
+- **proj_soc:** the battery % the brain projected for the end of the hour, 23+ h
+  and 6+ h ahead;
+- **actuals,** from the minute-by-minute recording: mean irradiance, outdoor
+  temperature, solar delivered and available, load, battery charged and
+  discharged, battery % at the end of the hour, and the minutes the arrays were
+  throttled;
+- **DC string voltage:** its hourly mean and peak, and the first minute of the hour
+  it showed light. It rises at first light before the inverters deliver, and sits
+  high when they're throttled.
+
+`GET /api/history?days=N` returns the last N days.
+
 ### Other readings
 
 Settings → Readings maps the readings that don't belong to the battery or an
 inverter: **irradiance** (when no Ecowitt gateway is polled) and **outdoor
-temperature**. Both are optional.
+temperature** (otherwise read from the Ecowitt gateway). Both are optional.
 
 ### Solar forecast
 
