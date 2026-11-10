@@ -30,9 +30,9 @@ const DEFAULTS = Object.freeze({
     // new). Below 100 the reported SoC is rescaled so this reads as 100%, and the
     // usable capacity shrinks to match. A wear setting: leave at 100 until needed.
     charge_calibration_pct: 100,
-    // A rung counts as reached once the battery has stayed this close to it for this
-    // long (deeper needs longer): [{ below_pct, seconds }]. See policy/dwell.js.
-    full_dwell: [{ below_pct: 0.1, seconds: 60 }, { below_pct: 1, seconds: 120 }, { below_pct: 2, seconds: 900 }],
+    // A rung counts as reached once the battery has stayed close to it long enough:
+    // base_seconds * e^(growth * depth%^2). See policy/dwell.js.
+    full_dwell: { base_seconds: 60, growth: 0.7 },
     // Short-term ratings above the continuous one: [{ kw, seconds }], e.g. an SP PRO
     // 7.5 does 8 kW for 60 min, 11.25 for 30 min, 13 for 60 s and 18 for 30 s.
     // Marked on the Live load gauge.
@@ -92,7 +92,8 @@ function upgradeBattery(out, from) {
   }
   b.ratings = (Array.isArray(b.ratings) ? b.ratings : []).map((r) => ({ kw: r && r.kw, seconds: r && r.seconds }));
   delete b.full_pct;   // 0.26.0's flat threshold, replaced by full_dwell
-  b.full_dwell = (Array.isArray(b.full_dwell) ? b.full_dwell : []).map((d) => ({ below_pct: d && d.below_pct, seconds: d && d.seconds }));
+  // 0.27.0 had a list of steps; the curve replaces it.
+  if (Array.isArray(b.full_dwell) || !b.full_dwell || typeof b.full_dwell !== "object") b.full_dwell = { base_seconds: 60, growth: 0.7 };
 }
 
 /** Older shapes of the inverter list, converted without needing live data:
@@ -162,12 +163,9 @@ function check(s) {
   if (!num(b.reserve_pct, 0, 50)) p.push("reserve must be 0-50%");
   if (!num(b.hysteresis_pct, 0, 20)) p.push("hysteresis must be 0-20%");
   if (!num(b.charge_calibration_pct, 50, 100)) p.push("charges to must be 50-100%");
-  const dw = Array.isArray(b.full_dwell) ? b.full_dwell : [];
-  for (const d of dw) {
-    if (!num(d.below_pct, 0.01, 20) || !num(d.seconds, 0, 86400)) p.push("each dwell step needs a depth of 0.01-20% and a time of 0-86400 s");
-  }
-  const dws = dw.filter((d) => num(d.below_pct, 0.01, 20) && num(d.seconds, 0, 86400)).sort((a, z) => a.below_pct - z.below_pct);
-  for (let i = 1; i < dws.length; i++) if (!(dws[i].seconds >= dws[i - 1].seconds)) p.push("dwell: a deeper step must need at least as long");
+  const dw = b.full_dwell || {};
+  if (!num(dw.base_seconds, 0, 3600)) p.push("dwell base time must be 0-3600 s");
+  if (!num(dw.growth, 0, 10)) p.push("dwell growth must be 0-10");
   const a = s.autonomy || {};
   if (!num(a.seed_load_kwh, 0, 10000)) p.push("autonomy seed load must be >= 0 kWh");
   if (!num(a.window_days, 1, 30) || !Number.isInteger(a.window_days)) p.push("autonomy window must be 1-30 whole days");

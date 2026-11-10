@@ -271,9 +271,9 @@ protection can't run.
 this far below its entry's floor, but never below the reserve, so loads don't flip
 on and off at a charge rung, e.g. sitting at 99.9% under "charge to 100%"),
 `full_dwell` (when a charge rung counts as reached: once the battery has stayed
-within each step's depth of it for that long, by default 0.1% for 60 s, 1% for
-120 s and 2% for 15 min, interpolated between, never past the last step. A
-reached rung stops holding back solar for the battery and lets the entries below
+close to it for `base_seconds × e^(growth × depth²)`, depth in % below the rung.
+The defaults, 60 s and 0.7, give 0.1% → 60 s, 1% → 2 min, 2% → 16 min, 3% →
+effectively never. A dip during the wait counts at its own depth. A reached rung stops holding back solar for the battery and lets the entries below
 it start on the battery, so a battery tapering at 99.x% still "reaches" 100%),
 `charge_calibration_pct` (default 100; if wear means the battery now only charges to
 N% of its original capacity, set N: the reported SoC is rescaled so N% reads and

@@ -211,14 +211,15 @@ t("hysteresis never reaches below the reserve, and 0 turns it off", () => {
   assert.strictEqual(decide(pol2, ctx({ pv: 0, soc: 39 }), { ...LIMITS, hysteresis_pct: 0 }, ["x"]).decisions[0].run, false);
 });
 
-t("dwell: your examples, interpolated between, never past the last step", () => {
+t("dwell curve: 60 s x e^(0.7 x depth^2), close to your examples, growing smoothly", () => {
   const { requiredSeconds } = require("../policy/dwell.js");
+  const near = (d, sec, tol) => assert.ok(Math.abs(requiredSeconds(d) - sec) <= tol, `${d}% -> ${requiredSeconds(d).toFixed(1)} s, want ~${sec}`);
   assert.strictEqual(requiredSeconds(0), 0);
-  assert.strictEqual(requiredSeconds(0.1), 60);
-  assert.ok(Math.abs(requiredSeconds(0.9) - (60 + (0.8 / 0.9) * 60)) < 1e-9);   // 99.1% -> ~113 s
-  assert.strictEqual(requiredSeconds(1), 120);
-  assert.strictEqual(requiredSeconds(2), 900);
-  assert.strictEqual(requiredSeconds(2.1), Infinity);
+  near(0.1, 60, 1);       // 99.9% for a minute
+  near(0.9, 106, 2);      // 99.1% for under two minutes
+  near(2, 987, 2);        // 98% for ~16.5 minutes
+  for (let d = 0.1; d < 3; d += 0.1) assert.ok(requiredSeconds(d + 0.1) > requiredSeconds(d), "always rising");
+  assert.strictEqual(requiredSeconds(1, { base_seconds: 30, growth: 0 }), 30, "growth 0: flat");
 });
 
 t("dwell: a rung counts as reached once the battery has stayed close long enough; a dip restarts it", () => {
@@ -226,10 +227,11 @@ t("dwell: a rung counts as reached once the battery has stayed close long enough
   const s = (pts) => pts.map(([sec, soc]) => [sec * 1000, soc]);
   assert.strictEqual(reached(100, s([[0, 99.9], [30, 99.9]])), false, "99.9% for 30 s: not yet");
   assert.strictEqual(reached(100, s([[0, 99.9], [65, 99.9]])), true, "99.9% for 65 s");
-  assert.strictEqual(reached(100, s([[0, 98], [600, 98]])), false, "98% for 10 min: needs 15");
-  assert.strictEqual(reached(100, s([[0, 98], [910, 98]])), true, "98% for 15 min");
-  assert.strictEqual(reached(100, s([[0, 99.9], [40, 97.5], [100, 99.9]])), false, "a dip past 2% in the window");
-  assert.strictEqual(reached(100, s([[0, 97.5], [100, 99.9], [170, 99.9]])), true, "the dip is older than the 60 s it needs");
+  assert.strictEqual(reached(100, s([[0, 98], [600, 98]])), false, "98% for 10 min: needs ~16");
+  assert.strictEqual(reached(100, s([[0, 98], [990, 98]])), true, "98% for 16.5 min");
+  assert.strictEqual(reached(100, s([[0, 99.9], [40, 97], [100, 99.9]])), false, "a 3% dip in the window");
+  assert.strictEqual(reached(100, s([[0, 97], [100, 99.9], [170, 99.9]])), true, "the dip is older than the 60 s it needs");
+  assert.strictEqual(reached(100, s([[0, 96.5], [7200, 96.5]])), false, "3.5% below: needs more than the 2 h kept");
   assert.strictEqual(reached(40, s([[0, 40.2]])), true, "at or above always counts");
 });
 

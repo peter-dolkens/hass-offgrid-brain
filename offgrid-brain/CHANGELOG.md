@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.27.1
+- The dwell rule for charge rungs is a smooth curve instead of interpolated steps:
+  `base_seconds × e^(growth × depth²)`, defaults 60 s and 0.7. That gives 0.1%
+  below → 60 s, 0.5% → 71 s, 1% → 2 min, 1.5% → 4.8 min, 2% → 16 min, 2.5% → 79
+  min, 3% → never. It's nearly flat close to the rung, steep further down, with no
+  hard cut-off. Settings → Battery shows what the two numbers mean as you type.
+  0.27.0's step list migrates to the defaults.
+
 ## 0.27.0
 - **Dwell at charge rungs** replaces 0.26.0's flat "full at" threshold. A rung
   counts as reached once the battery has stayed close enough to it for long enough,

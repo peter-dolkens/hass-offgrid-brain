@@ -3,11 +3,14 @@
    A battery near full tapers to a trickle and may never read exactly 100%; one
    charging towards 40% can hover at 39.9%. So a rung counts as reached once the
    battery has stayed close enough for long enough, and the further below, the
-   longer it must stay:
+   longer it must stay, on a smooth curve:
 
-     curve  [{ below_pct, seconds }], e.g. 0.1% for 60 s, 1% for 120 s, 2% for 15 min
-            (interpolated between points, from 0% needing 0 s; deeper than the last
-            point never counts)
+     required seconds = base_seconds * e^(growth * depth^2),  depth in % below the rung
+
+   With the defaults (60 s, 0.7): 0.1% -> 60 s, 0.5% -> 71 s, 1% -> 2 min,
+   1.5% -> 4.8 min, 2% -> 16 min, 2.5% -> 1.3 h, 3% -> 9 h (in practice never).
+   Nearly flat close to the rung, so jitter at 99.8-99.9% barely matters; steep
+   further down, fading into "never" without a hard cut-off.
 
    history is [[epoch ms, soc], ...] oldest first, ending with now. The check walks
    back from now keeping the deepest dip seen so far: the rung is reached if, for
@@ -15,21 +18,14 @@
    requires. A dip half way through restarts the clock at its own depth. */
 "use strict";
 
-const DEFAULT_CURVE = Object.freeze([
-  { below_pct: 0.1, seconds: 60 },
-  { below_pct: 1, seconds: 120 },
-  { below_pct: 2, seconds: 900 },
-]);
+const DEFAULT_CURVE = Object.freeze({ base_seconds: 60, growth: 0.7 });
+const MAX_WINDOW_SEC = 2 * 3600;   // history kept; a dip needing longer never counts
 
-/** Seconds the battery must stay within `below` % of a rung; Infinity past the curve. */
+/** Seconds the battery must stay within `below` % of a rung. */
 function requiredSeconds(below, curve = DEFAULT_CURVE) {
   if (below <= 0) return 0;
-  const pts = [{ below_pct: 0, seconds: 0 }, ...curve].sort((a, b) => a.below_pct - b.below_pct);
-  for (let i = 1; i < pts.length; i++) {
-    const a = pts[i - 1], b = pts[i];
-    if (below <= b.below_pct) return a.seconds + ((below - a.below_pct) / (b.below_pct - a.below_pct)) * (b.seconds - a.seconds);
-  }
-  return Infinity;
+  const c = curve && Number.isFinite(curve.base_seconds) ? curve : DEFAULT_CURVE;
+  return c.base_seconds * Math.exp(c.growth * below * below);
 }
 
 /** Has the battery reached rung `to`, given recent history? At or above it always counts. */
@@ -42,13 +38,13 @@ function reached(to, history, curve = DEFAULT_CURVE) {
     const [t, soc] = history[i];
     deepest = Math.max(deepest, to - soc);
     const need = requiredSeconds(deepest, curve);
-    if (!Number.isFinite(need)) return false;
+    if (need > MAX_WINDOW_SEC) return false;
     if ((now - t) / 1000 >= need) return true;
   }
   return false;
 }
 
-/** How much history the curve can ever need, in ms (plus a margin). */
-const horizonMs = (curve = DEFAULT_CURVE) => (Math.max(0, ...curve.map((p) => p.seconds)) + 60) * 1000;
+/** How much history to keep, in ms. */
+const horizonMs = () => (MAX_WINDOW_SEC + 60) * 1000;
 
-module.exports = { reached, requiredSeconds, horizonMs, DEFAULT_CURVE };
+module.exports = { reached, requiredSeconds, horizonMs, DEFAULT_CURVE, MAX_WINDOW_SEC };

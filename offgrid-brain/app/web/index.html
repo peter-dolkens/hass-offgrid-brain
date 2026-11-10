@@ -1216,13 +1216,9 @@ function renderBattery() {
     <div class="row2">${field("Capacity (kWh)", numHtml("capacity_kwh", b.capacity_kwh))}${field("Reserve (%)", numHtml("reserve_pct", b.reserve_pct), "Nothing may discharge below this.")}</div>
     <div class="row2">${field("Hysteresis (%)", numHtml("hysteresis_pct", b.hysteresis_pct), "A running load may keep using the battery this far below its floor, so loads don't flip on and off at a charge level.")}${field("Charges to (%)", numHtml("charge_calibration_pct", b.charge_calibration_pct), "The most the battery can now reach (100 when new). Below 100, this reads and counts as 100% everywhere, and the usable capacity scales with it.")}</div>
     <div><label>Counts as reached</label>
-      ${(b.full_dwell || []).map((d, i) => { const min = d.seconds >= 60 && d.seconds % 60 === 0;
-        return `<div class="rating"><span>within</span><input data-dw="${i}" data-f="pct" type="number" step="any" value="${d.below_pct == null ? "" : esc(d.below_pct)}"><span>% for</span>
-          <input data-dw="${i}" data-f="dur" type="number" step="any" value="${d.seconds == null ? "" : min ? d.seconds / 60 : d.seconds}">
-          <select data-dw="${i}" data-f="unit">${opts([["s", "s"], ["min", "min"]], min ? "min" : "s")}</select>
-          <button class="btn" data-dw="${i}" data-f="del" title="Remove">✕</button></div>`; }).join("")}
-      <button class="btn" id="dwell-add">Add step</button>
-      <div class="hint">A charge step (e.g. \u201ccharge to 100%\u201d) counts as reached once the battery has stayed this close to it this long. The deeper below, the longer it needs; between steps the time is interpolated.</div></div>
+      <div class="row2">${field("Base time (s)", numHtml("dw_base", (b.full_dwell || {}).base_seconds))}${field("Growth", numHtml("dw_growth", (b.full_dwell || {}).growth))}</div>
+      <div class="hint" id="dwell-preview"></div>
+      <div class="hint">A charge step (e.g. \u201ccharge to 100%\u201d) counts as reached once the battery has stayed close to it long enough: base time \u00d7 e^(growth \u00d7 depth\u00b2), depth in % below the step.</div></div>
     <div class="row2">${field("Inverter (kW)", numHtml("inverter_kw", b.inverter_kw), "Continuous rating.")}${field("Max charge (kW)", numHtml("max_charge_kw", b.max_charge_kw))}</div>
     <div><label>Short-term ratings</label>
       ${(b.ratings || []).map((r, i) => { const min = r.seconds >= 60 && r.seconds % 60 === 0;
@@ -1247,17 +1243,17 @@ function renderBattery() {
     else el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => readRating(i));
   }
   $("rating-add").addEventListener("click", () => { b.ratings = [...(b.ratings || []), { kw: null, seconds: null }]; renderBattery(); });
-  const dwRow = (i) => [...$("batt-el").querySelectorAll(`[data-dw="${i}"]`)].reduce((o, el) => ({ ...o, [el.dataset.f]: el }), {});
-  const readDwell = (i) => {
-    const r = dwRow(i), pct = r.pct.value.trim(), dur = r.dur.value.trim();
-    b.full_dwell[i] = { below_pct: pct === "" ? null : Number(pct), seconds: dur === "" ? null : Math.round(Number(dur) * (r.unit.value === "min" ? 60 : 1)) };
+  // The dwell curve's two numbers live in b.full_dwell; show what they mean as you type.
+  const showDwell = () => {
+    const d = b.full_dwell || {}, t = (x) => d.base_seconds * Math.exp(d.growth * x * x);
+    const nice = (sec) => (!Number.isFinite(sec) ? "\u2014" : sec < 90 ? `${Math.round(sec)} s` : sec < 5400 ? `${(sec / 60).toFixed(sec < 600 ? 1 : 0)} min` : sec > 7200 ? "never" : `${(sec / 3600).toFixed(1)} h`);
+    $("dwell-preview").textContent = [0.1, 0.5, 1, 1.5, 2, 2.5, 3].map((x) => `${x}% \u2192 ${nice(t(x))}`).join(" \u00b7 ");
   };
-  for (const el of $("batt-el").querySelectorAll("[data-dw]")) {
-    const i = Number(el.dataset.dw);
-    if (el.dataset.f === "del") el.addEventListener("click", () => { b.full_dwell.splice(i, 1); renderBattery(); });
-    else el.addEventListener(el.tagName === "SELECT" ? "change" : "input", () => readDwell(i));
+  for (const [k, f] of [["dw_base", "base_seconds"], ["dw_growth", "growth"]]) {
+    const el = $("batt-el").querySelector(`[data-k="${k}"]`);
+    el.addEventListener("input", () => { b.full_dwell = { ...(b.full_dwell || {}), [f]: el.value.trim() === "" ? null : Number(el.value) }; delete b[k]; showDwell(); });
   }
-  $("dwell-add").addEventListener("click", () => { b.full_dwell = [...(b.full_dwell || []), { below_pct: null, seconds: null }]; renderBattery(); });
+  showDwell();
 }
 
 function renderInverters() {
@@ -1337,7 +1333,7 @@ async function saveInverters() {
 
 function loadTiles() {
   battModel = { ...settingsSaved.battery, ratings: (settingsSaved.battery.ratings || []).map((r) => ({ ...r })),
-    full_dwell: (settingsSaved.battery.full_dwell || []).map((d) => ({ ...d })) };
+    full_dwell: { ...(settingsSaved.battery.full_dwell || {}) } };
   invModel = ((settingsSaved.solar && settingsSaved.solar.inverters) || []).map((x) => ({ ...x }));
   renderBattery();
   renderInverters();
