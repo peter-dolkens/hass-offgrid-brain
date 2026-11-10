@@ -20,7 +20,7 @@ function readBattery(cfg, bridge, ha) {
     const b = bridge || {};
     return {
       source: "bridge",
-      soc: b.soc || NONE, loadKw: b.loadKw || NONE, batteryKw: b.batteryKw || NONE,
+      soc: b.soc || NONE, loadKw: b.loadKw || NONE, batteryKw: b.batteryKw || NONE, generatorKw: b.generatorKw || NONE,
       energy: b.energy || null, charger: b.charger || null, chargeLimitKw: b.chargeLimitKw,
     };
   }

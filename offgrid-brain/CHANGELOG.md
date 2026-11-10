@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.23.1
+- Energy dashboard: generator energy is metered by the brain too, integrated from
+  the SP PRO's generator power, so none of the published energy counters depend on
+  the SP PRO's daily counters or its clock any more. Today's SP PRO figures are
+  only used to start the meters.
+
 ## 0.23.0
 - Energy dashboard: battery charged, battery discharged and load energy now come
   from the brain's own lifetime meters, integrated from the live power readings and

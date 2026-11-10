@@ -34,6 +34,7 @@ function parseBridge(doc, now = Date.now()) {
   const loadKw = spOk ? reading(sp.ac && sp.ac.load_kilowatts, sp.live_read_at, now) : NONE;
   // Positive while CHARGING, negative while discharging (verified against SoC trend).
   const batteryKw = spOk ? reading(sp.battery && sp.battery.kilowatts, sp.live_read_at, now) : NONE;
+  const generatorKw = spOk ? reading(sp.generator && sp.generator.kilowatts, sp.live_read_at, now) : NONE;
 
   // PV is only trustworthy when every inverter reported; a partial sum would
   // under-read solar. Age is the OLDEST inverter reading.
@@ -56,8 +57,10 @@ function parseBridge(doc, now = Date.now()) {
     energyKwh: i.healthy && i.energy ? reading(i.energy.total_wh / 1000, i.taken_at, now) : NONE,
   }));
 
-  // The SP PRO only exposes TODAY's energy, reset at its own midnight. That still
-  // works as total_increasing: HA treats the drop to zero as a new cycle.
+  // The SP PRO only exposes TODAY's energy, reset at its own midnight, by its own
+  // clock (which can be an hour or more out). The brain doesn't publish these: it
+  // meters battery, load and generator energy itself (policy/meter.js) and only uses
+  // these to start its meters from today's figures.
   const today = (spOk && sp.today) || {};
   const day = (v) => (spOk ? reading(v, sp.today_read_at, now) : NONE);
   const energy = {
@@ -70,7 +73,7 @@ function parseBridge(doc, now = Date.now()) {
   // the inverters to the load; while charging it takes up to the charge limit.
   const charger = spOk && typeof sp.charger === "string" ? sp.charger : null;
   const chargeLimitKw = spOk && sp.regulation ? sp.regulation.charge_power_limit_kilowatts : NaN;
-  return { soc, loadKw, batteryKw, pvKw, inverters, energy, charger, chargeLimitKw, healthy: spOk };
+  return { soc, loadKw, batteryKw, generatorKw, pvKw, inverters, energy, charger, chargeLimitKw, healthy: spOk };
 }
 
 /** Entity-safe key from an inverter name ("Right" -> "right"). */

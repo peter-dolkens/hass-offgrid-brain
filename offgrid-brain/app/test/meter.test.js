@@ -40,4 +40,17 @@ t("totals survive a restart and never go down", () => {
   close(back.totals.loadKwh, m.totals.loadKwh);
 });
 
+t("generator input is metered too, from its own seed", () => {
+  const m = new EnergyMeter(); m.seed({ generatorKwh: 2 });
+  m.add(0, { generatorKw: 3 }); m.add(60000, { generatorKw: 3 });
+  close(m.totals.generatorKwh, 2 + 3 / 60);
+});
+
+t("a meter saved before the generator was metered starts it at zero", () => {
+  const old = new EnergyMeter({ totals: { batteryInKwh: 1, batteryOutKwh: 2, loadKwh: 3 } });
+  assert.ok(!old.seeded);
+  old.seed({});   // what main does once the bridge has had its chance
+  assert.deepStrictEqual(old.totals, { batteryInKwh: 1, batteryOutKwh: 2, loadKwh: 3, generatorKwh: 0 });
+});
+
 console.log(`\n${pass} passed`);

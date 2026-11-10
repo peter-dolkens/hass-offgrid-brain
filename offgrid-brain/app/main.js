@@ -268,13 +268,14 @@ async function main() {
         const e = batt.energy || {}, v = (k) => (e[k] && Number.isFinite(e[k].value) ? e[k].value : NaN);
         const have = ["batteryInKwh", "batteryOutKwh", "loadKwh"].every((k) => Number.isFinite(v(k)));
         if (have || Date.now() - startedAt > 120 * 1000) {
-          meter.seed({ batteryInKwh: v("batteryInKwh"), batteryOutKwh: v("batteryOutKwh"), loadKwh: v("loadKwh") });
+          meter.seed({ batteryInKwh: v("batteryInKwh"), batteryOutKwh: v("batteryOutKwh"), loadKwh: v("loadKwh"), generatorKwh: v("generatorKwh") });
           log.info(`energy meters started at in ${meter.totals.batteryInKwh.toFixed(3)} / out ${meter.totals.batteryOutKwh.toFixed(3)} / load ${meter.totals.loadKwh.toFixed(3)} kWh`);
         }
       }
-      meter.add(now.getTime(), { batteryKw: batt.batteryKw.ageSec < STALE_SEC ? batt.batteryKw.value : NaN, loadKw });
+      const fresh = (r) => (r && r.ageSec < STALE_SEC ? r.value : NaN);
+      meter.add(now.getTime(), { batteryKw: fresh(batt.batteryKw), loadKw, generatorKw: fresh(batt.generatorKw) });
       const none = { value: NaN, ageSec: Infinity };
-      energy = { ...(batt.energy || {}), ...(meter.seeded ? meter.readings() : { batteryInKwh: none, batteryOutKwh: none, loadKwh: none }) };
+      energy = meter.seeded ? meter.readings() : { batteryInKwh: none, batteryOutKwh: none, loadKwh: none, generatorKwh: none };
     }
 
     // --- available solar ---

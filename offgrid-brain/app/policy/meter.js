@@ -1,5 +1,5 @@
-/* The brain's own lifetime energy meters: battery charged, battery discharged and
-   house load, integrated from the live power readings.
+/* The brain's own lifetime energy meters: battery charged, battery discharged,
+   house load and generator input, integrated from the live power readings.
 
    Why not the SP PRO's counters: the bridge only has TODAY's figures. They tick in
    ~0.1 kWh steps and reset at the SP PRO's own midnight, and its clock can be well
@@ -14,7 +14,7 @@
 "use strict";
 
 const MAX_GAP_SEC = 60;
-const KEYS = ["batteryInKwh", "batteryOutKwh", "loadKwh"];
+const KEYS = ["batteryInKwh", "batteryOutKwh", "loadKwh", "generatorKwh"];
 
 class EnergyMeter {
   constructor(state) {
@@ -34,7 +34,7 @@ class EnergyMeter {
   }
 
   /** Count one tick. batteryKw: + charging, - discharging. NaN readings count nothing. */
-  add(nowMs, { batteryKw, loadKw }) {
+  add(nowMs, { batteryKw, loadKw, generatorKw }) {
     if (!this.seeded) return;
     const prev = this.last;
     this.last = nowMs;
@@ -45,6 +45,7 @@ class EnergyMeter {
       else this.totals.batteryOutKwh += -batteryKw * h;
     }
     if (Number.isFinite(loadKw) && loadKw > 0) this.totals.loadKwh += loadKw * h;
+    if (Number.isFinite(generatorKw) && generatorKw > 0) this.totals.generatorKwh += generatorKw * h;
   }
 
   /** Readings in the shape inputs.energy uses, fresh as of now. */
