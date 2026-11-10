@@ -207,6 +207,16 @@ for tuning the model. Each row has:
 
 `GET /api/history?days=N` returns the last N days.
 
+**Blocked irradiance sensor.** If irradiance drops below 10% of its recent level
+(from at least 300 W/m²) in a single reading, and nothing else agrees the sun has
+gone, the brain holds the last good level. "Nothing else" means the solar forecast
+for now wasn't expecting darkness, or the inverters are delivering more than that
+darkness could give. Sun doesn't do that, but a bird on the sensor does. The hold
+ends when the reading recovers to half the held level, or after 10 minutes, when
+the new level is accepted as real weather. Each event goes to
+`history/events-<year>.jsonl`, and the hourly row counts the minutes held
+(`irradiance_held_min`).
+
 ### Other readings
 
 Settings → Readings maps the readings that don't belong to the battery or an

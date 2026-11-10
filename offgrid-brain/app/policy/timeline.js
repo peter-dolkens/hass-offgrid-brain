@@ -24,7 +24,7 @@ const { decide } = require("./dispatch.js");
 const { seasonOf, houseOcc, dayOfYear, autonomyOf } = require("./context.js");
 
 const MIN = 60 * 1000, HOUR = 60 * MIN;
-const NUMS = ["soc", "loadKw", "pvKw", "availKw", "battKw", "irr", "tout", "dcV"];
+const NUMS = ["soc", "loadKw", "pvKw", "availKw", "battKw", "irr", "irrHeld", "tout", "dcV"];
 
 class Recorder {
   constructor({ keepHours = 26, stepSec = 60 } = {}) {

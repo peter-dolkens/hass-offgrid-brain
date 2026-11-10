@@ -34,6 +34,7 @@ const { Recorder, project, loadProfile, learnOverhead } = require("./policy/time
 const { EnergyMeter } = require("./policy/meter.js");
 const { HourLog } = require("./policy/hourlog.js");
 const Dwell = require("./policy/dwell.js");
+const { IrradianceGuard } = require("./policy/irrguard.js");
 const { startServer, savePolicy } = require("./web/server.js");
 const VERSION = require("./package.json").version;
 
@@ -110,6 +111,8 @@ async function main() {
   // corrected for their midnight reset (policy/meter.js).
   const meter = new EnergyMeter(saved.meter);
   const hourLog = new HourLog({ dir: HISTORY_DIR, state: saved.hourlog });
+  // Holds the last good irradiance through a blocked sensor (a bird, 10 Nov 12:53).
+  const irrGuard = IrradianceGuard.fromJSON(saved.irrguard);
   let loggedHour = null;
   const startedAt = Date.now();
   let timelineSavedAt = Date.now();
@@ -313,8 +316,23 @@ async function main() {
     // so delivered PV understates the sun. Estimate what each array COULD give
     // from irradiance, learning each array's factor while it's unthrottled.
     const irrEnt = pick([["ecowitt", ecowitt.irradiance], ["ha", ha.number(sources.irradiance)]]);
-    const irradiance = irrEnt.ageSec < STALE_SEC ? irrEnt.value : NaN;
     const pvDelivered = Number.isFinite(pvEnt.value) && pvAge < STALE_SEC ? pvEnt.value : NaN;
+    // A sudden near-total drop nothing else agrees with is a blocked sensor: hold the
+    // last good level (policy/irrguard.js) and log the event.
+    const irrRaw = irrEnt.ageSec < STALE_SEC ? irrEnt.value : NaN;
+    const hourStart = Math.floor(now.getTime() / 3600000) * 3600000;
+    const fcNow = forecast.between(hourStart, hourStart + 3600000)[0];
+    const guarded = irrGuard.filter(now.getTime(), irrRaw, {
+      forecastKw: fcNow ? fcNow.kwh : NaN, deliveredKw: pvDelivered,
+      kwp: inv.reduce((t, i) => t + (Number.isFinite(i.kwp) ? i.kwp : 0), 0),
+    });
+    if (guarded.event) {
+      const e = guarded.event;
+      if (e.type === "start") log.warn(`irradiance: ${e.reading_wm2} W/m² after ${e.held_wm2}: looks like a blocked sensor; holding ${e.held_wm2} W/m²`);
+      else log.info(`irradiance: sensor block over after ${e.minutes} min (${e.how}; lowest ${e.lowest_wm2} W/m²)`);
+      hourLog.event({ kind: "irradiance_blocked", ...e });
+    }
+    const irradiance = guarded.value;
     // Each inverter's own array size and AC rating (kWp falls back to what its
     // source reports). An inverter with no live reading still adds capacity.
     const arrays = inv.map((i) => ({
@@ -334,7 +352,7 @@ async function main() {
     // Dispatch spends what the sun can give, not just what was delivered.
     const pvKw = Number.isFinite(pvAvailable) ? Math.max(pvDelivered || 0, pvAvailable) : pvDelivered;
     const solar = {
-      irradiance: irrEnt, deliveredKw: pvDelivered, availableKw: pvAvailable,
+      irradiance: { ...irrEnt, value: irradiance, raw: irrRaw, held: guarded.held }, deliveredKw: pvDelivered, availableKw: pvAvailable,
       headroomKw: Number.isFinite(pvAvailable) && Number.isFinite(pvDelivered) ? Math.max(0, pvAvailable - pvDelivered) : NaN,
       curtailed: perArray.some((a) => a.curtailed), unconstrained,
       // What the solar inverters can put on the AC bus together (AC rating, else kWp).
@@ -394,7 +412,7 @@ async function main() {
     const battKw = batt.batteryKw.ageSec < STALE_SEC ? batt.batteryKw.value : NaN;
     recorder.add(now.getTime(), {
       soc: socUsable ? socEnt.value : NaN, loadKw, pvKw: pvDelivered, availKw: pvAvailable, battKw,
-      irr: irradiance, tout: Number.isFinite(toutEnt.value) && toutEnt.ageSec < 30 * 60 ? toutEnt.value : NaN,
+      irr: irradiance, irrHeld: guarded.held ? 1 : 0, tout: Number.isFinite(toutEnt.value) && toutEnt.ageSec < 30 * 60 ? toutEnt.value : NaN,
       dcV: (() => { const v = inv.map((i) => (i.dcVolts && i.dcVolts.ageSec < STALE_SEC ? i.dcVolts.value : NaN)).filter(Number.isFinite); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN; })(),
       run: result.decisions.filter((d) => d.run).map((d) => d.id), shed: result.shed.map((d) => d.id),
       flagged: result.flagged.map((d) => d.id), floorPct: result.floorPct,
@@ -433,7 +451,7 @@ async function main() {
 
     await actuator.apply(result.decisions);
     mqttSink.publishTick({ ctx, result, safeMode, dryRun, inputs: snapshot.inputs, solar });
-    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), hourlog: hourLog.toJSON(), updated: now.toISOString() });
+    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), hourlog: hourLog.toJSON(), irrguard: irrGuard.toJSON(), updated: now.toISOString() });
   }
 
   applySettings(settings);
@@ -441,7 +459,7 @@ async function main() {
 
   process.on("SIGTERM", () => {
     log.info("shutting down");
-    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), hourlog: hourLog.toJSON() });
+    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), hourlog: hourLog.toJSON(), irrguard: irrGuard.toJSON() });
     recorder.save(TIMELINE_PATH);
     process.exit(0);
   });

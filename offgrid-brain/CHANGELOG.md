@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.28.0
+- **Blocked irradiance sensor guard.** On 10 Nov at 12:53 the Ecowitt read
+  20–50 W/m² for 7½ minutes, then 1,035 again, while an unthrottled array next door
+  held 7.5 kW: something sat on the sensor.
+  - A near-total drop in one reading that the forecast and the inverters don't
+    agree with now holds the last good level until the sensor recovers, for up to
+    10 minutes; then the new level is accepted as weather. Solar available, the
+    learned array factors and dispatch all use the held value.
+  - Events are written to `history/events-<year>.jsonl`, the hourly log counts the
+    minutes held, and the add-on log notes each start and end.
+
 ## 0.27.2
 - Dwell curve defaults retuned so 0.1% below a rung needs 60 s and 2.5% needs 60 min
   (59.6 s, growth 0.656): 0.5% → 70 s, 1% → 1.9 min, 1.5% → 4.4 min, 2% → 13.7 min.

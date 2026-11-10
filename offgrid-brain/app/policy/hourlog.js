@@ -94,6 +94,8 @@ class HourLog {
       throttled_min: ss.filter((s) => Number.isFinite(s.availKw) && Number.isFinite(s.pvKw) && s.availKw - s.pvKw > THROTTLED_KW).length,
       // DC string voltage (mean of the inverters): its hourly mean and peak, and the
       // first minute of the hour it showed light (> DC_LIGHT_V): sunrise, before power.
+      // minutes the irradiance sensor looked blocked and its last good level was held
+      irradiance_held_min: +ss.reduce((t, s) => t + (Number.isFinite(s.irrHeld) ? s.irrHeld : 0), 0).toFixed(1),
       dc_volts_mean: r1(mean("dcV"), 0),
       dc_volts_max: (() => { const x = ss.map((s) => s.dcV).filter(Number.isFinite); return x.length ? Math.round(Math.max(...x)) : null; })(),
       dc_light_min: (() => { const s = ss.find((x) => x.dcV > DC_LIGHT_V); return s ? Math.round((s.t - h) / 60000) : null; })(),
@@ -101,6 +103,18 @@ class HourLog {
   }
 
   file(h) { return path.join(this.dir, `hourly-${new Date(h).getFullYear()}.jsonl`); }
+
+  /** Something worth a line of its own (e.g. a blocked irradiance sensor), in events-<year>.jsonl. */
+  event(e) {
+    if (!this.dir) return;
+    const at = e.end || e.start || Date.now();
+    const row = { at: new Date(at).toISOString(), local: localTime(at), ...e,
+      ...(e.start ? { start: new Date(e.start).toISOString() } : {}), ...(e.end ? { end: new Date(e.end).toISOString() } : {}) };
+    try {
+      fs.mkdirSync(this.dir, { recursive: true });
+      fs.appendFileSync(path.join(this.dir, `events-${new Date(at).getFullYear()}.jsonl`), JSON.stringify(row) + "\n");
+    } catch (err) { log.warn("could not write the events log", err.message); }
+  }
 
   append(row) {
     if (!this.dir) return;
@@ -126,6 +140,12 @@ class HourLog {
   }
 
   toJSON() { return { vintages: this.vintages, lastClosed: this.lastClosed }; }
+}
+
+/** "2026-11-10 12:53:08" in the process time zone. */
+function localTime(ms) {
+  const d = new Date(ms), p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
 }
 
 /** "2026-11-10 13:00" in the process time zone, for reading the file by eye. */
