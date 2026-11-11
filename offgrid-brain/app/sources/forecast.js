@@ -26,7 +26,24 @@ function sumForecasts(result) {
       byHour.set(t, (byHour.get(t) || 0) + wh / 1000);
     }
   }
-  return [...byHour].sort((a, b) => a[0] - b[0]).map(([t, kwh]) => ({ t, kwh }));
+  return fillGaps([...byHour].sort((a, b) => a[0] - b[0]).map(([t, kwh]) => ({ t, kwh })));
+}
+
+/* Forecast.Solar sometimes leaves out an hour in the middle of the day (on 12 Nov
+   it skipped 10:00 with 09:00 and 11:00 at 3.9 and 6.1 kWh), and a missing hour
+   reads as no sun. A gap of up to maxHours between two hours that both have sun is
+   filled in a straight line; the night, many hours long, is left empty. */
+function fillGaps(hourly, maxHours = 1) {
+  const out = [];
+  for (let i = 0; i < hourly.length; i++) {
+    const a = hourly[i], z = hourly[i + 1];
+    out.push(a);
+    if (!z || a.kwh <= 0 || z.kwh <= 0) continue;
+    const steps = Math.round((z.t - a.t) / HOUR);
+    if (steps < 2 || steps > maxHours + 1) continue;
+    for (let k = 1; k < steps; k++) out.push({ t: a.t + k * HOUR, kwh: a.kwh + ((z.kwh - a.kwh) * k) / steps });
+  }
+  return out;
 }
 
 /** Local-date key ("2026-11-10") of an epoch ms, in the process time zone. */
@@ -130,4 +147,4 @@ class CompareForecast {
   hourly() { return parseDetailedHourly(this.entities.map((e) => this.ha.states.get(e))); }
 }
 
-module.exports = { SolarForecast, CompareForecast, sumForecasts, dailyTotals, parseDetailedHourly, withRange };
+module.exports = { SolarForecast, CompareForecast, sumForecasts, dailyTotals, parseDetailedHourly, withRange, fillGaps };

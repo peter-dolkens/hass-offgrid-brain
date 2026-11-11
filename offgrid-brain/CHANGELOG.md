@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.1
+- **Forecast gaps.** Forecast.Solar sometimes leaves out one hour in the middle of
+  the day (12 Nov: no 10:00), which the projection read as no sun, shedding loads
+  for that hour. A single missing hour between two sunny hours is now filled
+  between its neighbours.
+
 ## 0.30.0
 - **Forecast range on the timeline.** With a comparison forecast (Solcast), the
   projection shows a low-high band around solar available and battery %. The

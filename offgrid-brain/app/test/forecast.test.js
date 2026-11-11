@@ -2,7 +2,7 @@
 "use strict";
 process.env.TZ = "Australia/Sydney";
 const assert = require("assert");
-const { SolarForecast, CompareForecast, sumForecasts, dailyTotals, parseDetailedHourly, withRange } = require("../sources/forecast.js");
+const { SolarForecast, CompareForecast, sumForecasts, dailyTotals, parseDetailedHourly, withRange, fillGaps } = require("../sources/forecast.js");
 const { buildContext, LoadHistory } = require("../policy/context.js");
 
 let pass = 0;
@@ -80,6 +80,12 @@ t("range: the planning forecast borrows Solcast's p10/p90 ratios, hour by hour",
   ];                                               // hour 3: no Solcast at all
   const r = withRange(primary, solcast, { capKw: 20 });
   assert.deepStrictEqual(r.map((h) => [h.low, h.kwh, h.high]), [[5, 10, 12.5], [7.5, 10, 20], [0.5, 0.5, 0.5], [4, 4, 4]]);
+});
+
+t("a missing daytime hour is filled between its neighbours; the night isn't", () => {
+  const H = 3600000, T = Date.parse("2026-11-11T22:00:00Z");
+  const h = fillGaps([{ t: T, kwh: 3.9 }, { t: T + 2 * H, kwh: 6.1 }, { t: T + 9 * H, kwh: 0.2 }, { t: T + 20 * H, kwh: 0.1 }]);
+  assert.deepStrictEqual(h.map((x) => [(x.t - T) / H, +x.kwh.toFixed(2)]), [[0, 3.9], [1, 5], [2, 6.1], [9, 0.2], [20, 0.1]]);
 });
 
 console.log(`\n${pass} passed`);
