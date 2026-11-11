@@ -79,6 +79,7 @@ class HourLog {
       this.lastClosed = h;
     }
     for (const r of rows) this.append(r);
+    if (this.recent) this.recent = [...this.recent, ...rows].filter((r) => Date.parse(r.hour) >= nowMs - 48 * HOUR);
     for (const k of Object.keys(this.vintages)) if (Number(k) <= this.lastClosed) delete this.vintages[k];
     return rows;
   }
@@ -143,6 +144,24 @@ class HourLog {
       }
     }
     return out;
+  }
+
+  /** What a forecast said for each hour since `fromMs` that has begun, as it stood
+      just before the hour (the `last` lead): [{t, kwh}], for the Live timeline's past
+      day. Closed hours come from the log (kept in memory after the first read), the
+      running hour from its vintage. Hours the forecast didn't cover are left out. */
+  pastForecast(fromMs, nowMs = Date.now(), key = "forecast") {
+    if (!this.recent) this.recent = this.read(2, nowMs);
+    const out = new Map();
+    for (const r of this.recent) {
+      const t = Date.parse(r.hour), f = r[key];
+      if (t >= fromMs && f && Number.isFinite(f.last)) out.set(t, f.last);
+    }
+    for (const [k, v] of Object.entries(this.vintages)) {
+      const t = Number(k), f = v[key];
+      if (t >= fromMs && t <= nowMs && f && Number.isFinite(f.last)) out.set(t, f.last);
+    }
+    return [...out].sort((a, b) => a[0] - b[0]).map(([t, kwh]) => ({ t, kwh }));
   }
 
   toJSON() { return { vintages: this.vintages, lastClosed: this.lastClosed }; }

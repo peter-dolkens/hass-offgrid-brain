@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.31.0
+- **Past forecast on the timeline.** The recorded day now carries a dashed line of
+  what the solar forecast said for each hour just before it began (from the hourly
+  log), beside the solar the arrays actually saw. The tooltip shows it too.
+
 ## 0.30.1
 - **Forecast gaps.** Forecast.Solar sometimes leaves out one hour in the middle of
   the day (12 Nov: no 10:00), which the projection read as no sun, shedding loads

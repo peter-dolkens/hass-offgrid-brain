@@ -186,7 +186,10 @@ async function main() {
     const past = recorder.since(now - 24 * 3600 * 1000);
     const devices = policy.devices.map((d) => ({ id: d.id, name: d.name || d.id, kw: d.kw, important: d.important !== false }));
     const floors = [...new Set(policy.list.filter((e) => e.type === "charge" && e.to < 100).map((e) => e.to))].sort((a, b) => a - b);
-    const base = { now, from: now - 24 * 3600 * 1000, to: now + 24 * 3600 * 1000, battery: calibrated(settings.battery), floors, devices, past };
+    // What the forecast said for the past day's hours, to set beside what the sun gave.
+    let pastForecast = [];
+    try { pastForecast = hourLog.pastForecast(now - 25 * 3600 * 1000, now); } catch (e) { log.debug("past forecast unavailable", e.message); }
+    const base = { now, from: now - 24 * 3600 * 1000, to: now + 24 * 3600 * 1000, battery: calibrated(settings.battery), floors, devices, past, pastForecast };
     if (!lastTick) return { ...base, future: [] };
     const overheadKw = learnOverhead(recorder.all());
     // The forecast with Solcast's low/high range; the plan is made on the low case.

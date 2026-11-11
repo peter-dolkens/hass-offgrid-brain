@@ -78,4 +78,13 @@ t("a comparison forecast gets its own vintages and range in the row", () => {
   assert.deepStrictEqual(r.solcast, { d1: 9, h6: 9, last: 8, p10_last: 6, p90_last: 10 });
 });
 
+t("past forecast: closed hours from the log, the running hour from its vintage", () => {
+  const d = dir(), l = new HourLog({ dir: d });
+  l.closeHours(T0 - 2 * H + 5 * MIN, []);
+  l.noteForecast(T0 - 3 * H, [{ t: T0 - 2 * H, kwh: 3 }, { t: T0 - H, kwh: 4 }, { t: T0, kwh: 5 }, { t: T0 + H, kwh: 6 }]);
+  l.closeHours(T0 + 5 * MIN, []);   // writes the two hours before T0
+  const fresh = new HourLog({ dir: d, state: l.toJSON() });   // as after a restart: rows read back from the file
+  assert.deepStrictEqual(fresh.pastForecast(T0 - 3 * H, T0 + 5 * MIN), [{ t: T0 - 2 * H, kwh: 3 }, { t: T0 - H, kwh: 4 }, { t: T0, kwh: 5 }]);
+});
+
 console.log(`\n${pass} passed`);
