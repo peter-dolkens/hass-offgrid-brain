@@ -22,7 +22,7 @@ const { HAClient } = require("./sources/ha.js");
 const { InverterSet } = require("./sources/inverters.js");
 const { readBattery, batteryEntities } = require("./sources/battery.js");
 const { SplinkPoller } = require("./sources/splink.js");
-const { SolarForecast, CompareForecast } = require("./sources/forecast.js");
+const { SolarForecast, CompareForecast, withRange } = require("./sources/forecast.js");
 const { EcowittPoller } = require("./sources/ecowitt.js");
 const { SolarEstimator, isUnconstrained } = require("./policy/solar.js");
 const { pick, STALE_SEC } = require("./sources/pick.js");
@@ -30,7 +30,7 @@ const { Actuator } = require("./sinks/actuator.js");
 const { MqttSink, resolveBroker } = require("./sinks/mqtt.js");
 const { decide } = require("./policy/dispatch.js");
 const { buildContext, LoadHistory } = require("./policy/context.js");
-const { Recorder, project, loadProfile, learnOverhead } = require("./policy/timeline.js");
+const { Recorder, projectRange, loadProfile, learnOverhead } = require("./policy/timeline.js");
 const { EnergyMeter } = require("./policy/meter.js");
 const { HourLog } = require("./policy/hourlog.js");
 const Dwell = require("./policy/dwell.js");
@@ -189,16 +189,19 @@ async function main() {
     const base = { now, from: now - 24 * 3600 * 1000, to: now + 24 * 3600 * 1000, battery: calibrated(settings.battery), floors, devices, past };
     if (!lastTick) return { ...base, future: [] };
     const overheadKw = learnOverhead(recorder.all());
-    const future = project({
+    // The forecast with Solcast's low/high range; the plan is made on the low case.
+    const ranged = withRange(forecast.between(now - 3600 * 1000, now + 25 * 3600 * 1000),
+      compareForecast.entities.length ? compareForecast.hourly() : [], { capKw: lastTick.acTotalKw });
+    const future = projectRange({
       now, soc: lastTick.soc, ctx: lastTick.ctx, policy, limits, battery: calibrated(settings.battery),
-      forecast: forecast.between(now - 3600 * 1000, now + 25 * 3600 * 1000),
+      forecast: ranged,
       load: loadProfile(past, lastTick.loadKw),
       autonomy: lastTick.autonomy,
       overheadKw,
       running: lastRunning,
       history: socHistory,
     });
-    return { ...base, future, overheadKw, forecast: lastTick.forecast };
+    return { ...base, future, overheadKw, forecast: lastTick.forecast, ranged: ranged.some((h) => h.low !== h.kwh || h.high !== h.kwh) };
   }
   const summarise = (r) => ({
     trace: r.trace, decisions: r.decisions, floorPct: r.floorPct, chargeKw: r.charge,
@@ -440,6 +443,7 @@ async function main() {
       soc, ctx, loadKw: Number.isFinite(loadKw) ? loadKw : NaN,
       autonomy: { expectedLoadKwh: history.expectedDailyKwh(), forecastKwh },
       forecast: snapshot.forecast,
+      acTotalKw: solar.acTotalKw,
     };
 
     // The hourly log: remember each forecast's view of the hours ahead; once an hour,

@@ -99,6 +99,27 @@ function parseDetailedHourly(states) {
   return out.sort((a, b) => a.t - b.t);
 }
 
+/* The planning forecast has no range of its own (Forecast.Solar gives one figure an
+   hour), so it borrows Solcast's: each hour's low and high are the planning figure
+   scaled by Solcast's p10/p50 and p90/p50 for that hour. The range keeps Solcast's
+   view of how uncertain the hour is, while the middle stays the forecast the brain
+   plans with. Hours Solcast barely expects sun in (p50 under minKw) have no usable
+   ratio and keep low = high = the forecast; so does every hour without Solcast.
+   capKw caps the high case at what the inverters can deliver. */
+function withRange(primary, compare, { capKw = Infinity, minKw = 0.05 } = {}) {
+  const byHour = new Map((compare || []).map((h) => [Math.floor(h.t / HOUR) * HOUR, h]));
+  return (primary || []).map((h) => {
+    const c = byHour.get(h.t);
+    let lo = 1, hi = 1;
+    if (c && c.kwh >= minKw) {
+      if (Number.isFinite(c.p10)) lo = Math.max(0, Math.min(1, c.p10 / c.kwh));
+      if (Number.isFinite(c.p90)) hi = Math.max(1, c.p90 / c.kwh);
+    }
+    const cap = Number.isFinite(capKw) && capKw > 0 ? Math.max(capKw, h.kwh) : Infinity;
+    return { t: h.t, kwh: h.kwh, low: +(h.kwh * lo).toFixed(4), high: +Math.min(cap, h.kwh * hi).toFixed(4) };
+  });
+}
+
 class CompareForecast {
   constructor({ ha, prefix }) { this.ha = ha; this.setPrefix(prefix); }
   setPrefix(prefix) {
@@ -109,4 +130,4 @@ class CompareForecast {
   hourly() { return parseDetailedHourly(this.entities.map((e) => this.ha.states.get(e))); }
 }
 
-module.exports = { SolarForecast, CompareForecast, sumForecasts, dailyTotals, parseDetailedHourly };
+module.exports = { SolarForecast, CompareForecast, sumForecasts, dailyTotals, parseDetailedHourly, withRange };

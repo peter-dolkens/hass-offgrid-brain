@@ -97,6 +97,7 @@
   .tl-chart svg, .gauges svg { display: block; width: 100%; height: auto; overflow: visible; }
   .gauges svg { max-width: 260px; margin: 0 auto; }
   .tl-foot { display: flex; gap: 6px 14px; flex-wrap: wrap; padding: 6px 14px 12px; font-size: 12px; color: var(--muted); }
+  .tl-foot i.range { background: color-mix(in srgb, var(--batt) 22%, transparent); border: 1px dashed var(--pv-2); box-sizing: border-box; }
   .tl-foot i { display: inline-block; width: 12px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   .gauges { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 14px; }
   .panel { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
@@ -225,6 +226,7 @@
         <span><i style="background:var(--reserve)"></i>reserve</span><span><i style="background:var(--pv)"></i>solar used</span>
         <span><i style="background:var(--solar-av)"></i>solar available</span><span><i style="background:var(--load)"></i>load</span>
         <span><i style="background:var(--bad)"></i>important loads shed</span><span>dashed = projected</span>
+        <span class="js-range" hidden><i class="range"></i>low–high forecast · loads planned on the low</span>
       </div>
     </div></div>
     <div class="gauges">
@@ -466,7 +468,8 @@ function momentAt(t) {
   // Samples from before 0.20 have no `flagged`: every shed counted then.
   const flagged = best.flagged || best.shed || [];
   return { ...best, t, projected: t > tl.now, shed: flagged, held: (best.shed || []).filter((id) => !flagged.includes(id)),
-    soc: n(best.soc), battKw: n(best.battKw), loadKw: n(best.loadKw), pvKw: n(best.pvKw), availKw: n(best.availKw) };
+    soc: n(best.soc), battKw: n(best.battKw), loadKw: n(best.loadKw), pvKw: n(best.pvKw), availKw: n(best.availKw),
+    socLow: n(best.socLow), socHigh: n(best.socHigh), availLow: n(best.availLow), availHigh: n(best.availHigh) };
 }
 const floorsOf = () => [state.battery.reserve_pct, ...((tl && tl.floors) || []).filter((f) => f > state.battery.reserve_pct)];
 
@@ -691,7 +694,7 @@ function drawChart(c, height) {
   const all = [...tl.past, ...tl.future];
   // Scaled to the largest load, solar delivered or solar available seen in the
   // recorded and projected day, not to what the inverters could do in principle.
-  const kwMax = niceMax(Math.max(0.5, ...all.map((p) => Math.max(n(p.loadKw) || 0, n(p.pvKw) || 0, n(p.availKw) || 0))));
+  const kwMax = niceMax(Math.max(0.5, ...all.map((p) => Math.max(n(p.loadKw) || 0, n(p.pvKw) || 0, n(p.availKw) || 0, n(p.availHigh) || 0))));
   // One plot: battery % on the left axis and kW on the right, over the same height.
   // The right margin fits its widest label ("12.5 kW" once compact) with room to spare.
   const rLabel = `${+kwMax.toFixed(2)} kW`;
@@ -704,6 +707,17 @@ function drawChart(c, height) {
   const yk = (v) => bot - (Math.min(v, kwMax) / kwMax) * (bot - top);
   c.geo = { x, ys, W, H, socTop: top, kwBot: bot, from: tl.from, to: tl.to, M };
   const line = (segs, y) => segs.map((s) => `M${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}`).join("");
+  // Between two keys of the same samples: the projection's low-high range.
+  const band = (list, lo, hi, y) => {
+    const segs = []; let cur = [];
+    for (const p of list) {
+      const a = n(p[lo]), z = n(p[hi]);
+      if (!Number.isFinite(a) || !Number.isFinite(z) || (cur.length && p.t - cur[cur.length - 1][0] > 31 * 60 * 1000)) { if (cur.length > 1) segs.push(cur); cur = []; }
+      if (Number.isFinite(a) && Number.isFinite(z)) cur.push([p.t, a, z]);
+    }
+    if (cur.length > 1) segs.push(cur);
+    return segs.map((s) => `M${s.map(([t, , z]) => `${x(t).toFixed(1)},${y(z).toFixed(1)}`).join("L")}L${s.slice().reverse().map(([t, a]) => `${x(t).toFixed(1)},${y(a).toFixed(1)}`).join("L")}Z`).join("");
+  };
   const area = (segs, y) => segs.map((s) => `M${x(s[0][0]).toFixed(1)},${bot}L${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}L${x(s[s.length - 1][0]).toFixed(1)},${bot}Z`).join("");
   const parts = [];
   // grid: lines shared by both axes; both ends are always labelled
@@ -727,13 +741,19 @@ function drawChart(c, height) {
   const runs = [[tl.past, 3 * 60 * 1000, false], [tl.future, 31 * 60 * 1000, true]];
   for (const [list, gap, proj] of runs) {
     const op = proj ? ' opacity=".55"' : "";
+    if (proj && tl.ranged) parts.push(`<path d="${band(list, "availKw", "availHigh", yk)}" fill="var(--solar-av)" opacity=".3"/>`);
     parts.push(`<path d="${area(segments(list, "availKw", gap), yk)}" fill="var(--solar-av)"${op}/>`);
     parts.push(`<path d="${area(segments(list, "pvKw", gap), yk)}" fill="var(--pv)"${proj ? ' opacity=".45"' : ' opacity=".85"'}/>`);
+    if (proj && tl.ranged) {   // the forecast's low and high edges
+      parts.push(`<path d="${line(segments(list, "availLow", gap), yk)}" fill="none" stroke="var(--pv-2)" stroke-width="1" stroke-dasharray="2 3"/>`);
+      parts.push(`<path d="${line(segments(list, "availHigh", gap), yk)}" fill="none" stroke="var(--pv-2)" stroke-width="1" stroke-dasharray="2 3" opacity=".6"/>`);
+    }
   }
   for (const f of floorsOf()) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${ys(f)}" y2="${ys(f)}" stroke="${f === b.reserve_pct ? "var(--reserve)" : "var(--floor)"}" stroke-dasharray="3 4" stroke-width="1"/>`);
   for (const [list, gap, proj] of runs) {
     const op = proj ? ' opacity=".55"' : "", dash = proj ? ' stroke-dasharray="5 4"' : "";
     parts.push(`<path d="${line(segments(list, "loadKw", gap), yk)}" fill="none" stroke="var(--load)" stroke-width="${cp ? 1.5 : 2}" stroke-linejoin="round"${dash}/>`);
+    if (proj && tl.ranged) parts.push(`<path d="${band(list, "socLow", "socHigh", ys)}" fill="var(--batt)" opacity=".16"/>`);
     parts.push(`<path d="${line(segments(list, "soc", gap), ys)}" fill="none" stroke="var(--batt)" stroke-width="${cp ? 2 : 2.5}" stroke-linejoin="round"${dash}/>`);
     // Consecutive samples merge into one bar each: drawn per minute, the seams
     // between neighbouring slivers show as stripes at fractional sizes.
@@ -784,7 +804,8 @@ function showTip(ev, t) {
   if (!tip) { tip = document.createElement("div"); tip.className = "tip"; document.body.appendChild(tip); }
   const m = momentAt(t);
   if (!m) return;
-  tip.innerHTML = `${t > tl.now ? "projected " : ""}${dayClock(t)}<br>battery ${fmt(m.soc, 0)}% · load ${kw(m.loadKw)}<br>solar ${kw(m.pvKw)} of ${kw(Number.isFinite(m.availKw) ? m.availKw : m.pvKw)}${(m.shed || []).length ? `<br>${m.shed.length} shed` : ""}${(m.held || []).length ? `<br>${m.held.length} held back` : ""}`;
+  const rng = (lo, hi, f) => (Number.isFinite(lo) && Number.isFinite(hi) && hi - lo > 0.005 ? ` <span class="muted">(${f(lo)}–${f(hi)})</span>` : "");
+  tip.innerHTML = `${t > tl.now ? "projected " : ""}${dayClock(t)}<br>battery ${fmt(m.soc, 0)}%${rng(m.socLow, m.socHigh, (v) => `${fmt(v, 0)}%`)} · load ${kw(m.loadKw)}<br>solar ${kw(m.pvKw)} of ${kw(Number.isFinite(m.availKw) ? m.availKw : m.pvKw)}${rng(m.availLow, m.availHigh, kw)}${(m.shed || []).length ? `<br>${m.shed.length} shed` : ""}${(m.held || []).length ? `<br>${m.held.length} held back` : ""}`;
   tip.hidden = false;
   const w = tip.offsetWidth;
   tip.style.left = `${Math.min(window.innerWidth - w - 8, ev.clientX + 12)}px`;
@@ -965,6 +986,7 @@ window.addEventListener("scroll", placeMini, { passive: true });
 async function refreshTimeline() {
   try {
     tl = await (await fetch("api/timeline", { cache: "no-store" })).json();
+    for (const r of document.querySelectorAll(".js-range")) r.hidden = !tl.ranged;
     const covered = tl.past.length ? tl.now - tl.past[0].t : 0;
     const fc = tl.forecast || {};
     $("tl-note").textContent = [

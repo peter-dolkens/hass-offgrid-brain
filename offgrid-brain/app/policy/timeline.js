@@ -16,7 +16,12 @@
    The battery also carries the inverter's own draw: what leaves the battery minus
    what reaches the AC load. On an SP PRO that's ~40 W, near enough constant, which
    is ~1 kWh a day. It's learned from the recording (learnOverhead) and charged to
-   every projected step, so it's met from solar when there is some. */
+   every projected step, so it's met from solar when there is some.
+
+   With a forecast range (low/high per hour, see withRange), projectRange() walks the
+   day three times. The shedding plan (run/shed/floors/deficit) comes from the LOW
+   case: loads are planned against a dull day, not an average one. The battery and
+   solar lines are the middle case, with the low and high cases alongside. */
 "use strict";
 const fs = require("fs");
 const log = require("../log.js");
@@ -179,4 +184,19 @@ function project({ now, soc, ctx, policy, limits, battery, forecast, load, auton
   return out;
 }
 
-module.exports = { Recorder, project, loadProfile, forecastAt, learnOverhead };
+/** project() for the low, middle and high forecast: the middle case's battery and
+    solar, the low case's plan, and both extremes as socLow/socHigh, availLow/availHigh. */
+function projectRange(opts) {
+  const fc = opts.forecast || [];
+  const pick = (k) => fc.map((h) => ({ t: h.t, kwh: Number.isFinite(h[k]) ? h[k] : h.kwh }));
+  const mid = project({ ...opts, forecast: pick("kwh") });
+  const low = project({ ...opts, forecast: pick("low") });
+  const high = project({ ...opts, forecast: pick("high") });
+  return mid.map((m, k) => {
+    const l = low[k], h = high[k];
+    return { ...m, run: l.run, shed: l.shed, flagged: l.flagged, floorPct: l.floorPct, deficit: l.deficit,
+      socLow: l.soc, socHigh: h.soc, availLow: l.availKw, availHigh: h.availKw };
+  });
+}
+
+module.exports = { Recorder, project, projectRange, loadProfile, forecastAt, learnOverhead };

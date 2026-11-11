@@ -2,7 +2,7 @@
 "use strict";
 process.env.TZ = "Australia/Sydney";
 const assert = require("assert");
-const { SolarForecast, CompareForecast, sumForecasts, dailyTotals, parseDetailedHourly } = require("../sources/forecast.js");
+const { SolarForecast, CompareForecast, sumForecasts, dailyTotals, parseDetailedHourly, withRange } = require("../sources/forecast.js");
 const { buildContext, LoadHistory } = require("../policy/context.js");
 
 let pass = 0;
@@ -68,6 +68,18 @@ t("Solcast's detailedHourly becomes an hourly series with its range", () => {
   const c = new CompareForecast({ ha: { states: new Map() }, prefix: "sensor.solcast_pv_forecast" });
   assert.deepStrictEqual(c.entities, ["sensor.solcast_pv_forecast_forecast_today", "sensor.solcast_pv_forecast_forecast_tomorrow"]);
   assert.deepStrictEqual(c.hourly(), []);
+});
+
+t("range: the planning forecast borrows Solcast's p10/p90 ratios, hour by hour", () => {
+  const H = 3600000, T = Date.parse("2026-11-10T00:00:00Z");
+  const primary = [{ t: T, kwh: 10 }, { t: T + H, kwh: 10 }, { t: T + 2 * H, kwh: 0.5 }, { t: T + 3 * H, kwh: 4 }];
+  const solcast = [
+    { t: T, kwh: 8, p10: 4, p90: 10 },            // low 50%, high 125%
+    { t: T + H, kwh: 8, p10: 6, p90: 24 },        // high 300%: capped at 20 kW
+    { t: T + 2 * H, kwh: 0.01, p10: 0, p90: 0.05 }, // too little sun for a ratio
+  ];                                               // hour 3: no Solcast at all
+  const r = withRange(primary, solcast, { capKw: 20 });
+  assert.deepStrictEqual(r.map((h) => [h.low, h.kwh, h.high]), [[5, 10, 12.5], [7.5, 10, 20], [0.5, 0.5, 0.5], [4, 4, 4]]);
 });
 
 console.log(`\n${pass} passed`);

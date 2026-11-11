@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.30.0
+- **Forecast range on the timeline.** With a comparison forecast (Solcast), the
+  projection shows a low-high band around solar available and battery %. The
+  planning forecast borrows Solcast's p10/p90 spread hour by hour.
+- **Loads are planned on the low case.** The projected shedding strip and the
+  reserve tint come from the low forecast; the battery line stays the middle case.
+  The tooltip shows the range for projected moments.
+
 ## 0.29.0
 - **Comparison forecast.** Settings → Readings → "Comparison forecast" takes the
   entity prefix of a second forecast (Solcast: `sensor.solcast_pv_forecast`). Its

@@ -5,7 +5,7 @@ const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { Recorder, project, loadProfile, forecastAt, learnOverhead } = require("../policy/timeline.js");
+const { Recorder, project, projectRange, loadProfile, forecastAt, learnOverhead } = require("../policy/timeline.js");
 
 let pass = 0;
 const t = (name, fn) => { try { fn(); pass++; console.log(`  ok  ${name}`); } catch (e) { console.error(`  FAIL ${name}\n       ${e.message}`); process.exitCode = 1; } };
@@ -104,6 +104,23 @@ t("projection: the overhead drains the battery at night and is met from solar by
   const steps = project({ now: T0, soc: 50, ctx, policy, limits, battery, forecast: [{ t: T0, kwh: 0.5 }, { t: T0 + HOUR, kwh: 0 }],
     load: () => 0.4, overheadKw: 0.1, hours: 1, stepMin: 60 });
   assert.deepStrictEqual(steps.map((s) => [s.pvKw, s.battKw]), [[0.5, 0], [0, -0.5]]);
+});
+
+t("range: the plan comes from the low case, the battery line from the middle, both extremes alongside", () => {
+  const fc = [{ t: T0, kwh: 6, low: 0, high: 9 }, { t: T0 + HOUR, kwh: 6, low: 0, high: 9 }];
+  const steps = projectRange({ now: T0, soc: 41, ctx, policy, limits, battery, forecast: fc, load: () => 6, hours: 1, stepMin: 60 });
+  assert.deepStrictEqual(steps.map((s) => s.soc), [41, 41]);
+  assert.deepStrictEqual(steps.map((s) => s.socLow), [41, 29]);
+  assert.deepStrictEqual(steps.map((s) => s.socHigh), [41, 47]);
+  assert.deepStrictEqual(steps[1].shed, ["ev"], "a dull day sheds the EV");
+  assert.deepStrictEqual([steps[1].availLow, steps[1].availKw, steps[1].availHigh], [0, 6, 9]);
+});
+
+t("range: no low/high means one case, same as project()", () => {
+  const fc = [{ t: T0, kwh: 8 }, { t: T0 + HOUR, kwh: 8 }];
+  const a = project({ now: T0, soc: 50, ctx, policy, limits, battery, forecast: fc, load: () => 1, hours: 2, stepMin: 60 });
+  const b = projectRange({ now: T0, soc: 50, ctx, policy, limits, battery, forecast: fc, load: () => 1, hours: 2, stepMin: 60 });
+  assert.deepStrictEqual(b.map((s) => [s.soc, s.socLow, s.socHigh]), a.map((s) => [s.soc, s.soc, s.soc]));
 });
 
 console.log(`\n${pass} passed`);
