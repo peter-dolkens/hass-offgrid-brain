@@ -85,6 +85,8 @@ t("past forecast: closed hours from the log, the running hour from its vintage",
   l.closeHours(T0 + 5 * MIN, []);   // writes the two hours before T0
   const fresh = new HourLog({ dir: d, state: l.toJSON() });   // as after a restart: rows read back from the file
   assert.deepStrictEqual(fresh.pastForecast(T0 - 3 * H, T0 + 5 * MIN), [{ t: T0 - 2 * H, kwh: 3 }, { t: T0 - H, kwh: 4 }, { t: T0, kwh: 5 }]);
+  l.noteForecast(T0 - 3 * H, [{ t: T0 + H, kwh: 6, p10: 3, p90: 7 }], "solcast");
+  assert.deepStrictEqual(l.pastForecast(T0, T0 + H + MIN, "solcast"), [{ t: T0 + H, kwh: 6, p10: 3, p90: 7 }]);
 });
 
 console.log(`\n${pass} passed`);

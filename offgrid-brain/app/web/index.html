@@ -227,7 +227,7 @@
         <span><i style="background:var(--reserve)"></i>reserve</span><span><i style="background:var(--pv)"></i>solar used</span>
         <span><i style="background:var(--solar-av)"></i>solar available</span><span><i style="background:var(--load)"></i>load</span>
         <span><i style="background:var(--bad)"></i>important loads shed</span><span>dashed = projected</span>
-        <span class="js-pastfc" hidden><i class="pastfc"></i>forecast, as it stood</span>
+        <span class="js-pastfc" hidden><i class="pastfc"></i>forecast as it stood (shaded: low–high)</span>
         <span class="js-range" hidden><i class="range"></i>low–high forecast · loads planned on the low</span>
       </div>
     </div></div>
@@ -466,14 +466,13 @@ function pastForecastPoints() {
   const out = [];
   for (const h of (tl && tl.pastForecast) || []) {
     if (h.t >= tl.now || h.t + HOUR_MS < tl.from) continue;
-    out.push({ t: Math.min(tl.now, h.t + HOUR_MS / 2), kw: h.kwh });
+    out.push({ t: Math.min(tl.now, h.t + HOUR_MS / 2), kw: h.kwh, low: n(h.low), high: n(h.high) });
   }
   return out;
 }
-/** The past forecast for the hour holding `t` (kW), or NaN. */
+/** The past forecast for the hour holding `t`: {kwh, low, high}, or null. */
 function pastForecastAt(t) {
-  const h = ((tl && tl.pastForecast) || []).find((x) => t >= x.t && t < x.t + HOUR_MS);
-  return h ? h.kwh : NaN;
+  return ((tl && tl.pastForecast) || []).find((x) => t >= x.t && t < x.t + HOUR_MS) || null;
 }
 /** The recorded or projected sample nearest a moment. */
 function momentAt(t) {
@@ -725,11 +724,11 @@ function drawChart(c, height) {
   c.geo = { x, ys, W, H, socTop: top, kwBot: bot, from: tl.from, to: tl.to, M };
   const line = (segs, y) => segs.map((s) => `M${s.map(([t, v]) => `${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("L")}`).join("");
   // Between two keys of the same samples: the projection's low-high range.
-  const band = (list, lo, hi, y) => {
+  const band = (list, lo, hi, y, gap = 31 * 60 * 1000) => {
     const segs = []; let cur = [];
     for (const p of list) {
       const a = n(p[lo]), z = n(p[hi]);
-      if (!Number.isFinite(a) || !Number.isFinite(z) || (cur.length && p.t - cur[cur.length - 1][0] > 31 * 60 * 1000)) { if (cur.length > 1) segs.push(cur); cur = []; }
+      if (!Number.isFinite(a) || !Number.isFinite(z) || (cur.length && p.t - cur[cur.length - 1][0] > gap)) { if (cur.length > 1) segs.push(cur); cur = []; }
       if (Number.isFinite(a) && Number.isFinite(z)) cur.push([p.t, a, z]);
     }
     if (cur.length > 1) segs.push(cur);
@@ -756,6 +755,8 @@ function drawChart(c, height) {
   // series, layered so the solar areas sit behind the floors and lines.
   // Past solid, projection dashed / faded.
   const runs = [[tl.past, 3 * 60 * 1000, false], [tl.future, 31 * 60 * 1000, true]];
+  const pf = pastForecastPoints();
+  if (pf.some((p) => p.high - p.low > 0.005)) parts.push(`<path d="${band(pf, "low", "high", yk, HOUR_MS)}" fill="var(--solar-av)" opacity=".3"/>`);
   for (const [list, gap, proj] of runs) {
     const op = proj ? ' opacity=".55"' : "";
     if (proj && tl.ranged) parts.push(`<path d="${band(list, "availKw", "availHigh", yk)}" fill="var(--solar-av)" opacity=".3"/>`);
@@ -768,7 +769,10 @@ function drawChart(c, height) {
   }
   // The past day's forecast, as it stood just before each hour: a dashed line
   // through the hours' midpoints, stopping at now, beside what the sun gave.
-  const pf = pastForecastPoints();
+  if (pf.some((p) => p.high - p.low > 0.005)) {   // the range's edges; its fill sits behind the actuals
+    parts.push(`<path d="${line(segments(pf, "low", HOUR_MS), yk)}" fill="none" stroke="var(--pv-2)" stroke-width="1" stroke-dasharray="2 3"/>`);
+    parts.push(`<path d="${line(segments(pf, "high", HOUR_MS), yk)}" fill="none" stroke="var(--pv-2)" stroke-width="1" stroke-dasharray="2 3" opacity=".6"/>`);
+  }
   if (pf.length) parts.push(`<path d="${line(segments(pf, "kw", HOUR_MS), yk)}" fill="none" stroke="var(--pv-2)" stroke-width="${cp ? 1.25 : 1.5}" stroke-dasharray="4 3" stroke-linejoin="round"/>`);
   for (const f of floorsOf()) parts.push(`<line x1="${M.l}" x2="${W - M.r}" y1="${ys(f)}" y2="${ys(f)}" stroke="${f === b.reserve_pct ? "var(--reserve)" : "var(--floor)"}" stroke-dasharray="3 4" stroke-width="1"/>`);
   for (const [list, gap, proj] of runs) {
@@ -826,7 +830,7 @@ function showTip(ev, t) {
   const m = momentAt(t);
   if (!m) return;
   const rng = (lo, hi, f) => (Number.isFinite(lo) && Number.isFinite(hi) && hi - lo > 0.005 ? ` <span class="muted">(${f(lo)}–${f(hi)})</span>` : "");
-  tip.innerHTML = `${t > tl.now ? "projected " : ""}${dayClock(t)}<br>battery ${fmt(m.soc, 0)}%${rng(m.socLow, m.socHigh, (v) => `${fmt(v, 0)}%`)} · load ${kw(m.loadKw)}<br>solar ${kw(m.pvKw)} of ${kw(Number.isFinite(m.availKw) ? m.availKw : m.pvKw)}${rng(m.availLow, m.availHigh, kw)}${t <= tl.now && Number.isFinite(pastForecastAt(t)) ? ` <span class="muted">· forecast ${kw(pastForecastAt(t))}</span>` : ""}${(m.shed || []).length ? `<br>${m.shed.length} shed` : ""}${(m.held || []).length ? `<br>${m.held.length} held back` : ""}`;
+  tip.innerHTML = `${t > tl.now ? "projected " : ""}${dayClock(t)}<br>battery ${fmt(m.soc, 0)}%${rng(m.socLow, m.socHigh, (v) => `${fmt(v, 0)}%`)} · load ${kw(m.loadKw)}<br>solar ${kw(m.pvKw)} of ${kw(Number.isFinite(m.availKw) ? m.availKw : m.pvKw)}${rng(m.availLow, m.availHigh, kw)}${(() => { const f = t <= tl.now ? pastForecastAt(t) : null; return f ? ` <span class="muted">· forecast ${kw(f.kwh)}${rng(n(f.low), n(f.high), kw).replace(/<[^>]+>/g, "")}</span>` : ""; })()}${(m.shed || []).length ? `<br>${m.shed.length} shed` : ""}${(m.held || []).length ? `<br>${m.held.length} held back` : ""}`;
   tip.hidden = false;
   const w = tip.offsetWidth;
   tip.style.left = `${Math.min(window.innerWidth - w - 8, ev.clientX + 12)}px`;

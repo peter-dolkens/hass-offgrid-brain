@@ -149,19 +149,18 @@ class HourLog {
   /** What a forecast said for each hour since `fromMs` that has begun, as it stood
       just before the hour (the `last` lead): [{t, kwh}], for the Live timeline's past
       day. Closed hours come from the log (kept in memory after the first read), the
-      running hour from its vintage. Hours the forecast didn't cover are left out. */
+      running hour from its vintage. Hours the forecast didn't cover are left out.
+      A forecast that kept a range (Solcast) also gives p10/p90. */
   pastForecast(fromMs, nowMs = Date.now(), key = "forecast") {
     if (!this.recent) this.recent = this.read(2, nowMs);
     const out = new Map();
-    for (const r of this.recent) {
-      const t = Date.parse(r.hour), f = r[key];
-      if (t >= fromMs && f && Number.isFinite(f.last)) out.set(t, f.last);
-    }
-    for (const [k, v] of Object.entries(this.vintages)) {
-      const t = Number(k), f = v[key];
-      if (t >= fromMs && t <= nowMs && f && Number.isFinite(f.last)) out.set(t, f.last);
-    }
-    return [...out].sort((a, b) => a[0] - b[0]).map(([t, kwh]) => ({ t, kwh }));
+    const take = (t, f) => {
+      if (t < fromMs || !f || !Number.isFinite(f.last)) return;
+      out.set(t, { t, kwh: f.last, ...(Number.isFinite(f.p10_last) ? { p10: f.p10_last } : {}), ...(Number.isFinite(f.p90_last) ? { p90: f.p90_last } : {}) });
+    };
+    for (const r of this.recent) take(Date.parse(r.hour), r[key]);
+    for (const [k, v] of Object.entries(this.vintages)) if (Number(k) <= nowMs) take(Number(k), v[key]);
+    return [...out.values()].sort((a, b) => a.t - b.t);
   }
 
   toJSON() { return { vintages: this.vintages, lastClosed: this.lastClosed }; }

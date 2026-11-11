@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.31.1
+- **Past forecast range.** The past day's forecast line now has its low-high range
+  too: the hourly log kept Solcast's p10/p90 as they stood before each hour, and they
+  are applied the same way as in the projection (shaded band, dotted edges). The
+  tooltip shows the range.
+
 ## 0.31.0
 - **Past forecast on the timeline.** The recorded day now carries a dashed line of
   what the solar forecast said for each hour just before it began (from the hourly

@@ -37,7 +37,8 @@ The add-on adds **Off-Grid Brain** to the Home Assistant sidebar (Ingress, admin
   solar available and battery %, and the shedding plan (and the reserve tint) is
   made on the **low** case, so loads are planned against a dull day. Over the past
   day a dashed line shows what the forecast said for each hour just before it
-  began, so it can be read against the solar actually available. Click or drag
+  began, with its low-high range, so it can be read against the solar actually
+  available. Click or drag
   the timeline to look at any
   moment, or press **Replay** to play the last day at 60×, 600× or 900× until it
   catches up to now. Scroll down and the timeline follows as a compact scrubber

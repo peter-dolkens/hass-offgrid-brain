@@ -188,7 +188,11 @@ async function main() {
     const floors = [...new Set(policy.list.filter((e) => e.type === "charge" && e.to < 100).map((e) => e.to))].sort((a, b) => a - b);
     // What the forecast said for the past day's hours, to set beside what the sun gave.
     let pastForecast = [];
-    try { pastForecast = hourLog.pastForecast(now - 25 * 3600 * 1000, now); } catch (e) { log.debug("past forecast unavailable", e.message); }
+    // With the same low/high as the projection: Solcast's range as it stood, applied to it.
+    try {
+      pastForecast = withRange(hourLog.pastForecast(now - 25 * 3600 * 1000, now),
+        hourLog.pastForecast(now - 25 * 3600 * 1000, now, "solcast"), { capKw: lastTick ? lastTick.acTotalKw : Infinity });
+    } catch (e) { log.debug("past forecast unavailable", e.message); }
     const base = { now, from: now - 24 * 3600 * 1000, to: now + 24 * 3600 * 1000, battery: calibrated(settings.battery), floors, devices, past, pastForecast };
     if (!lastTick) return { ...base, future: [] };
     const overheadKw = learnOverhead(recorder.all());
