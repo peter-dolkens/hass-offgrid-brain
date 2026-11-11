@@ -40,7 +40,9 @@ const DEFAULTS = Object.freeze({
   },
   autonomy: { seed_load_kwh: 30, window_days: 7 },
   // Readings that don't belong to the battery or an inverter.
-  sources: { outdoor_temp: "", pv_forecast_today: "", irradiance: "" },
+  // compare_forecast: entity prefix of a second forecast logged beside the one the
+  // brain plans with, e.g. "sensor.solcast_pv_forecast" (Solcast's detailedHourly).
+  sources: { outdoor_temp: "", pv_forecast_today: "", irradiance: "", compare_forecast: "" },
   splink: { enabled: false, urls: [], poll_seconds: 15, fast_seconds: 3 },
   ecowitt: { enabled: false, urls: [], poll_seconds: 10 },
   // One entry per AC-coupled solar inverter, each read through its own

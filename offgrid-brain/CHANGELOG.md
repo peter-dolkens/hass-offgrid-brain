@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.29.0
+- **Comparison forecast.** Settings → Readings → "Comparison forecast" takes the
+  entity prefix of a second forecast (Solcast: `sensor.solcast_pv_forecast`). Its
+  hour-by-hour forecast (`detailedHourly`) is logged in the hourly log beside the
+  one the brain plans with: the day-ahead, 6-hour and last values, plus Solcast's
+  low/high range. Logged only, so the two can be compared before switching.
+
 ## 0.28.1
 - Live: dragging across the timeline no longer selects text or highlights the
   chart. Scrubbing cancels the browser's text selection, including drags that

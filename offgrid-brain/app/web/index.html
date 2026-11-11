@@ -1107,6 +1107,7 @@ const FIELDS = [
   ["Readings from Home Assistant", "sources.irradiance", "entity", "Irradiance", "Only needed without an Ecowitt gateway.", "irradiance"],
   ["Readings from Home Assistant", "sources.outdoor_temp", "entity", "Outdoor temperature", "", "temperature"],
   ["Readings from Home Assistant", "sources.pv_forecast_today", "entity", "Solar forecast override", "kWh for the day. Leave empty to use the forecasts attached to solar in HA's Energy dashboard (e.g. Forecast.Solar).", "energy"],
+  ["Readings from Home Assistant", "sources.compare_forecast", "text", "Comparison forecast", "Entity prefix of a second forecast to log beside the first in the hourly log, e.g. sensor.solcast_pv_forecast (Solcast). Logged only; the brain doesn't plan with it.", null],
   ["SP PRO bridge (splink)", "splink.enabled", "bool", "Enabled", "The connection the battery and inverters use when their integration is the bridge."],
   ["SP PRO bridge (splink)", "splink.urls", "list", "URLs", "One per line, tried in order: LAN first, tunnel second."],
   ["SP PRO bridge (splink)", "splink.poll_seconds", "int", "Full read (s)", "PV and energy counters."],
@@ -1151,6 +1152,7 @@ function renderSettings(s) {
     if (type === "bool") input = `<div class="toggle"><input type="checkbox" id="${id}" ${v ? "checked" : ""}><span id="${id}-txt"></span></div>`;
     else if (type === "list") input = `<textarea id="${id}" spellcheck="false">${esc((v || []).join("\n"))}</textarea>`;
     else if (type === "entity") input = `<input type="text" id="${id}" list="dl-${kind}" value="${esc(v || "")}" placeholder="pick or type an entity id" spellcheck="false">`;
+    else if (type === "text") input = `<input type="text" id="${id}" value="${esc(v || "")}" spellcheck="false">`;
     else input = `<input type="number" id="${id}" step="any" value="${v == null ? "" : esc(v)}">`;
     html += `<label for="${id}">${esc(label)}</label>${input}`;
     if (type === "entity") html += `<div class="now" id="${id}-now">${esc(entityNow(v))}</div>`;
@@ -1173,7 +1175,7 @@ function readSettings() {
     let v;
     if (type === "bool") v = el.checked;
     else if (type === "list") v = el.value.split("\n").map((x) => x.trim()).filter(Boolean);
-    else if (type === "entity") v = el.value.trim();
+    else if (type === "entity" || type === "text") v = el.value.trim();
     else if (type === "num?") v = el.value.trim() === "" ? null : Number(el.value);
     else v = Number(el.value);
     setPath(s, path, v);

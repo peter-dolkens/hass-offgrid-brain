@@ -22,7 +22,7 @@ const { HAClient } = require("./sources/ha.js");
 const { InverterSet } = require("./sources/inverters.js");
 const { readBattery, batteryEntities } = require("./sources/battery.js");
 const { SplinkPoller } = require("./sources/splink.js");
-const { SolarForecast } = require("./sources/forecast.js");
+const { SolarForecast, CompareForecast } = require("./sources/forecast.js");
 const { EcowittPoller } = require("./sources/ecowitt.js");
 const { SolarEstimator, isUnconstrained } = require("./policy/solar.js");
 const { pick, STALE_SEC } = require("./sources/pick.js");
@@ -90,6 +90,8 @@ async function main() {
   const forecast = new SolarForecast({ ha });
   ha.onReady = () => forecast.refresh().catch((e) => log.warn("solar forecast unavailable", e.message));
   forecast.start();
+  // A second forecast (Solcast) logged beside the first, for comparison only.
+  const compareForecast = new CompareForecast({ ha, prefix: settings.sources.compare_forecast });
 
   const mqttCfg = opt.mqtt || {};
   const mqttSink = new MqttSink({
@@ -123,7 +125,9 @@ async function main() {
   let limits = null;
 
   function trackEntities() {
-    ha.track(Object.values(settings.sources).filter(Boolean));
+    ha.track(Object.entries(settings.sources).filter(([k, v]) => v && k !== "compare_forecast").map(([, v]) => v));
+    compareForecast.setPrefix(settings.sources.compare_forecast);
+    ha.track(compareForecast.entities);
     ha.track(policy.devices.flatMap((d) => [d.switch, d.power_sensor]).filter(Boolean));
     ha.track(inverters.entities());
     ha.track(batteryEntities(settings.battery));
@@ -441,6 +445,7 @@ async function main() {
     // The hourly log: remember each forecast's view of the hours ahead; once an hour,
     // write the hours that have ended and note the projection from here.
     hourLog.noteForecast(now.getTime(), forecast.between(now.getTime(), now.getTime() + 48 * 3600 * 1000));
+    if (compareForecast.entities.length) hourLog.noteForecast(now.getTime(), compareForecast.hourly(), "solcast");
     const hourNow = Math.floor(now.getTime() / 3600000);
     if (hourNow !== loggedHour) {
       loggedHour = hourNow;

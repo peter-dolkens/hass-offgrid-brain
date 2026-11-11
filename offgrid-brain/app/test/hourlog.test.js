@@ -67,4 +67,15 @@ t("Ecowitt outdoor temperature, in °C or converted from °F", () => {
   assert.ok(Number.isNaN(parseOutdoorTemp({ common_list: [] })));
 });
 
+t("a comparison forecast gets its own vintages and range in the row", () => {
+  const d = dir(), l = new HourLog({ dir: d });
+  l.closeHours(T0 + 5 * MIN, []);
+  l.noteForecast(T0 - 7 * H, [{ t: T0, kwh: 4.2 }]);
+  l.noteForecast(T0 - 30 * H, [{ t: T0, kwh: 9, p10: 5, p90: 11 }], "solcast");
+  l.noteForecast(T0 - 1 * H, [{ t: T0, kwh: 8, p10: 6, p90: 10 }], "solcast");
+  const r = l.closeHours(T0 + H + MIN, [])[0];
+  assert.deepStrictEqual(r.forecast, { h6: 4.2, last: 4.2 });
+  assert.deepStrictEqual(r.solcast, { d1: 9, h6: 9, last: 8, p10_last: 6, p90_last: 10 });
+});
+
 console.log(`\n${pass} passed`);

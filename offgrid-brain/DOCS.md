@@ -205,6 +205,12 @@ for tuning the model. Each row has:
   it showed light. It rises at first light before the inverters deliver, and sits
   high when they're throttled.
 
+A second forecast can be logged beside the first for comparison: set **Comparison
+forecast** (`sources.compare_forecast`) to Solcast's entity prefix, e.g.
+`sensor.solcast_pv_forecast`. Each row then has a `solcast` block with the same
+vintages plus its low/high range (`p10_last`, `p90_last`). The brain doesn't plan with
+it; keep it out of the Energy dashboard, or the brain would add it to the first.
+
 `GET /api/history?days=N` returns the last N days.
 
 **Blocked irradiance sensor.** If irradiance drops below 10% of its recent level

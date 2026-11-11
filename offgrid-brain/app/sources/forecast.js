@@ -83,4 +83,30 @@ class SolarForecast {
   between(from, to) { return this.hourly.filter((h) => h.t >= from && h.t < to); }
 }
 
-module.exports = { SolarForecast, sumForecasts, dailyTotals };
+/* A second forecast kept for comparison, not for planning: Solcast publishes its
+   hour-by-hour forecast for today and tomorrow as the `detailedHourly` attribute of
+   <prefix>_forecast_today / _forecast_tomorrow, each entry
+   { period_start, pv_estimate, pv_estimate10, pv_estimate90 } in kW for the hour. */
+function parseDetailedHourly(states) {
+  const out = [];
+  for (const st of states) {
+    for (const h of (st && st.attributes && st.attributes.detailedHourly) || []) {
+      const t = Date.parse(h.period_start);
+      if (!Number.isFinite(t) || !Number.isFinite(h.pv_estimate)) continue;
+      out.push({ t, kwh: h.pv_estimate, p10: h.pv_estimate10, p90: h.pv_estimate90 });
+    }
+  }
+  return out.sort((a, b) => a.t - b.t);
+}
+
+class CompareForecast {
+  constructor({ ha, prefix }) { this.ha = ha; this.setPrefix(prefix); }
+  setPrefix(prefix) {
+    this.prefix = prefix || "";
+    this.entities = this.prefix ? [`${this.prefix}_forecast_today`, `${this.prefix}_forecast_tomorrow`] : [];
+  }
+  /** Hourly [{t, kwh, p10, p90}] from the tracked entities' attributes. */
+  hourly() { return parseDetailedHourly(this.entities.map((e) => this.ha.states.get(e))); }
+}
+
+module.exports = { SolarForecast, CompareForecast, sumForecasts, dailyTotals, parseDetailedHourly };

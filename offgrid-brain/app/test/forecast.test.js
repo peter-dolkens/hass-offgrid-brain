@@ -2,7 +2,7 @@
 "use strict";
 process.env.TZ = "Australia/Sydney";
 const assert = require("assert");
-const { SolarForecast, sumForecasts, dailyTotals } = require("../sources/forecast.js");
+const { SolarForecast, CompareForecast, sumForecasts, dailyTotals, parseDetailedHourly } = require("../sources/forecast.js");
 const { buildContext, LoadHistory } = require("../policy/context.js");
 
 let pass = 0;
@@ -54,6 +54,20 @@ t("the forecast variable uses the next 24 h, autonomy the worst day", () => {
     history: new LoadHistory(7, 30), battery: { capacity_kwh: 51.8, reserve_pct: 10 } });
   assert.strictEqual(ctx.forecast, 1.5);
   assert.ok(Math.abs(ctx.autonomy - 25.9 / 16) < 1e-9);
+});
+
+t("Solcast's detailedHourly becomes an hourly series with its range", () => {
+  const st = (rows) => ({ attributes: { detailedHourly: rows } });
+  const h = parseDetailedHourly([
+    st([{ period_start: "2026-11-12T10:00:00+11:00", pv_estimate: 12.5, pv_estimate10: 6, pv_estimate90: 15 }]),
+    st([{ period_start: "2026-11-13T09:00:00+11:00", pv_estimate: 9 }, { period_start: "bad", pv_estimate: 1 }]),
+    null,
+  ]);
+  assert.deepStrictEqual(h.map((x) => [new Date(x.t).toISOString(), x.kwh, x.p10, x.p90]),
+    [["2026-11-11T23:00:00.000Z", 12.5, 6, 15], ["2026-11-12T22:00:00.000Z", 9, undefined, undefined]]);
+  const c = new CompareForecast({ ha: { states: new Map() }, prefix: "sensor.solcast_pv_forecast" });
+  assert.deepStrictEqual(c.entities, ["sensor.solcast_pv_forecast_forecast_today", "sensor.solcast_pv_forecast_forecast_tomorrow"]);
+  assert.deepStrictEqual(c.hourly(), []);
 });
 
 console.log(`\n${pass} passed`);

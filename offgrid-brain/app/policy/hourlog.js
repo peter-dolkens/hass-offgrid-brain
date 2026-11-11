@@ -4,6 +4,8 @@
    forecast said a day earlier, and the brain's own projections only live 26 hours.
    So for every hour the brain writes one row, when the hour has ended:
 
+     solcast   the same, from a second forecast kept for comparison (when set), plus
+               its low/high range (p10_last, p90_last)
      forecast  kWh the solar forecast gave for that hour, as it stood
                  d1    at least 24 h before the hour began (the day-ahead view)
                  h6    at least 6 h before
@@ -37,14 +39,18 @@ class HourLog {
     this.lastClosed = state && Number.isFinite(state.lastClosed) ? state.lastClosed : null;   // start of the last hour written
   }
 
-  /** Every forecast refresh: remember each future hour's kWh at each lead. */
-  noteForecast(nowMs, hourly) {
+  /** Every forecast refresh: remember each future hour's kWh at each lead, under
+      `key` ("forecast" for the one the brain plans with; "solcast" for the
+      comparison). Entries carrying p10/p90 also keep that range at the last lead. */
+  noteForecast(nowMs, hourly, key = "forecast") {
     for (const h of hourly || []) {
       const lead = h.t - nowMs;
       if (lead < 0 || !Number.isFinite(h.kwh)) continue;
       const v = (this.vintages[h.t] = this.vintages[h.t] || {});
-      v.forecast = v.forecast || {};
-      for (const [k, min] of Object.entries(LEADS)) if (lead >= min) v.forecast[k] = +h.kwh.toFixed(4);
+      const f = (v[key] = v[key] || {});
+      for (const [k, min] of Object.entries(LEADS)) if (lead >= min) f[k] = +h.kwh.toFixed(4);
+      if (Number.isFinite(h.p10)) f.p10_last = +h.p10.toFixed(4);
+      if (Number.isFinite(h.p90)) f.p90_last = +h.p90.toFixed(4);
     }
   }
 
@@ -85,7 +91,7 @@ class HourLog {
     const last = [...ss].reverse().find((s) => Number.isFinite(s.soc));
     return {
       hour: new Date(h).toISOString(), local: localHour(h), samples: ss.length,
-      forecast: v.forecast || {}, proj_soc: v.proj_soc || {},
+      forecast: v.forecast || {}, ...(v.solcast ? { solcast: v.solcast } : {}), proj_soc: v.proj_soc || {},
       irradiance_wm2: r1(mean("irr"), 0), outdoor_c: r1(mean("tout")),
       pv_kwh: kwh((s) => s.pvKw), available_kwh: kwh((s) => s.availKw), load_kwh: kwh((s) => s.loadKw),
       battery_in_kwh: kwh((s) => (Number.isFinite(s.battKw) ? Math.max(0, s.battKw) : NaN)),
