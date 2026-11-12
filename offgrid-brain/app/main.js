@@ -31,7 +31,7 @@ const { MqttSink, resolveBroker } = require("./sinks/mqtt.js");
 const { decide } = require("./policy/dispatch.js");
 const { buildContext, LoadHistory } = require("./policy/context.js");
 const { Recorder, projectRange, loadProfile, learnOverhead } = require("./policy/timeline.js");
-const { EnergyMeter } = require("./policy/meter.js");
+const { EnergyMeter, AvailableMeter } = require("./policy/meter.js");
 const { HourLog } = require("./policy/hourlog.js");
 const Dwell = require("./policy/dwell.js");
 const { IrradianceGuard } = require("./policy/irrguard.js");
@@ -112,6 +112,8 @@ async function main() {
   // Lifetime battery, load and generator energy from the SP PRO's daily counters,
   // corrected for their midnight reset (policy/meter.js).
   const meter = new EnergyMeter(saved.meter);
+  // What the arrays could have generated, lifetime (policy/meter.js).
+  const availMeter = new AvailableMeter(saved.available);
   const hourLog = new HourLog({ dir: HISTORY_DIR, state: saved.hourlog });
   // Holds the last good irradiance through a blocked sensor (a bird, 10 Nov 12:53).
   const irrGuard = IrradianceGuard.fromJSON(saved.irrguard);
@@ -365,8 +367,10 @@ async function main() {
       ? perArray.reduce((t, a) => t + a.availableKw, 0) : NaN;
     // Dispatch spends what the sun can give, not just what was delivered.
     const pvKw = Number.isFinite(pvAvailable) ? Math.max(pvDelivered || 0, pvAvailable) : pvDelivered;
+    availMeter.add(now.getTime(), pvAvailable, pvDelivered);
     const solar = {
       irradiance: { ...irrEnt, value: irradiance, raw: irrRaw, held: guarded.held }, deliveredKw: pvDelivered, availableKw: pvAvailable,
+      availableKwh: availMeter.total,
       headroomKw: Number.isFinite(pvAvailable) && Number.isFinite(pvDelivered) ? Math.max(0, pvAvailable - pvDelivered) : NaN,
       curtailed: perArray.some((a) => a.curtailed), unconstrained,
       // What the solar inverters can put on the AC bus together (AC rating, else kWp).
@@ -467,7 +471,7 @@ async function main() {
 
     await actuator.apply(result.decisions);
     mqttSink.publishTick({ ctx, result, safeMode, dryRun, inputs: snapshot.inputs, solar });
-    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), hourlog: hourLog.toJSON(), irrguard: irrGuard.toJSON(), updated: now.toISOString() });
+    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), available: availMeter.toJSON(), hourlog: hourLog.toJSON(), irrguard: irrGuard.toJSON(), updated: now.toISOString() });
   }
 
   applySettings(settings);
@@ -475,7 +479,7 @@ async function main() {
 
   process.on("SIGTERM", () => {
     log.info("shutting down");
-    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), hourlog: hourLog.toJSON(), irrguard: irrGuard.toJSON() });
+    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), available: availMeter.toJSON(), hourlog: hourLog.toJSON(), irrguard: irrGuard.toJSON() });
     recorder.save(TIMELINE_PATH);
     process.exit(0);
   });

@@ -89,4 +89,32 @@ class EnergyMeter {
   toJSON() { return { counters: this.counters }; }
 }
 
-module.exports = { EnergyMeter, MAX_GAP_SEC, MAX_REMAINDER_KWH };
+/* Solar available energy: what the arrays COULD have generated, lifetime kWh.
+
+   Off grid, delivered solar is throttled to what the house and battery take, so
+   the inverters' own counters say little about the sun. This integrates, tick by
+   tick, the larger of the estimated available power and what was delivered (the
+   estimate can dip under a real reading). Home Assistant's long-term statistics of
+   it give daily, monthly and yearly totals of the solar resource, for planning
+   loads against the days the site actually gets. A gap longer than MAX_GAP_SEC
+   counts only MAX_GAP_SEC, so a restart or outage leaves a hole rather than
+   guessing; with no reading at all (no irradiance and no inverters) nothing is
+   counted. */
+class AvailableMeter {
+  constructor(state) {
+    this.total = state && Number.isFinite(state.total) ? state.total : 0;
+    this.last = null;
+  }
+
+  add(nowMs, availableKw, deliveredKw) {
+    const kw = Math.max(Number.isFinite(availableKw) ? availableKw : -Infinity, Number.isFinite(deliveredKw) ? deliveredKw : -Infinity);
+    const prev = this.last;
+    this.last = nowMs;
+    if (prev == null || !Number.isFinite(kw)) return;
+    this.total += Math.max(0, kw) * (Math.min(MAX_GAP_SEC, Math.max(0, (nowMs - prev) / 1000)) / 3600);
+  }
+
+  toJSON() { return { total: this.total }; }
+}
+
+module.exports = { EnergyMeter, AvailableMeter, MAX_GAP_SEC, MAX_REMAINDER_KWH };

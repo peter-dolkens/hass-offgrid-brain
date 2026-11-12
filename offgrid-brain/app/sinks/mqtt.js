@@ -126,6 +126,12 @@ class MqttSink {
       { name: "Irradiance", unit_of_measurement: "W/m²", device_class: "irradiance", state_class: "measurement" });
     this.publish("sensor", "solar_available_power", num(solar.availableKw * 1000, 0),
       { name: "Solar available", ...power, icon: "mdi:solar-power-variant-outline" });
+    if (Number.isFinite(solar.availableKwh) && solar.availableKwh > 0) {
+      this.publish("sensor", "solar_available_energy", solar.availableKwh.toFixed(3), {
+        name: "Solar available energy", unit_of_measurement: "kWh", device_class: "energy", state_class: "total_increasing",
+        suggested_display_precision: 2, icon: "mdi:solar-power-variant-outline",
+      });
+    }
     this.publish("sensor", "solar_headroom_power", num(solar.headroomKw * 1000, 0),
       { name: "Solar headroom", ...power, icon: "mdi:arrow-collapse-up" });
     this.publish("binary_sensor", "solar_curtailed", solar.curtailed ? "ON" : "OFF",

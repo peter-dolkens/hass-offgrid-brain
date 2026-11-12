@@ -1,7 +1,7 @@
 /* Tests for the lifetime energy counters. Run: node test/meter.test.js */
 "use strict";
 const assert = require("assert");
-const { EnergyMeter } = require("../policy/meter.js");
+const { EnergyMeter, AvailableMeter } = require("../policy/meter.js");
 
 let pass = 0;
 const t = (name, fn) => { try { fn(); pass++; console.log(`  ok  ${name}`); } catch (e) { console.error(`  FAIL ${name}\n       ${e.message}`); process.exitCode = 1; } };

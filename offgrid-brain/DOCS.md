@@ -326,7 +326,12 @@ it through the SP PRO bridge). Known GEN24 limitations:
 ### `mqtt`: optional bridge (add-on options)
 
 Solar entities: irradiance, available solar (total and per array), solar headroom
-(available minus delivered), and a **Solar curtailed** binary sensor.
+(available minus delivered), a **Solar curtailed** binary sensor, and **Solar
+available energy** (`sensor.offgrid_brain_solar_available_energy`, kWh, total
+increasing): what the arrays could have generated, lifetime. Home Assistant's
+statistics of it give the site's daily solar resource even on days the battery was
+full and the inverters were throttled. It isn't generation, so don't put it in the
+Energy dashboard's solar slot; use a statistics graph (period: day, type: change).
 
 
 Publishes the brain's state as an **Off-Grid Brain** device via MQTT discovery:

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.32.0
+- **Solar available energy.** A new lifetime counter,
+  `sensor.offgrid_brain_solar_available_energy` (kWh, total increasing): what the
+  arrays could have generated, the larger of the estimated available power and
+  what was delivered, integrated tick by tick. Off grid the inverters are throttled
+  once the battery is full, so their own counters understate the sun; Home
+  Assistant's long-term statistics of this one keep the site's daily solar resource
+  for planning. Not for the Energy dashboard's solar slot (it isn't generation).
+
 ## 0.31.1
 - **Past forecast range.** The past day's forecast line now has its low-high range
   too: the hourly log kept Solcast's p10/p90 as they stood before each hour, and they
