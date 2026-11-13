@@ -197,6 +197,11 @@ class MqttSink {
     this.publish("sensor", "held_back_count", held.length,
       { name: "Loads held back", state_class: "measurement", icon: "mdi:timer-sand-paused" });
     if (solar) this.publishSolar(solar, power);
+    // The storm signal, for automations of your own (e.g. unplugging gear in lightning).
+    this.publish("binary_sensor", "storm", ctx.storm ? "ON" : "OFF", { name: "Storm", icon: "mdi:weather-lightning" });
+    this.publish("binary_sensor", "storm_ahead", ctx.storm_ahead ? "ON" : "OFF", { name: "Storm ahead", icon: "mdi:weather-lightning-rainy" });
+    this.publish("sensor", "lightning_distance", ctx.lightning >= 999 ? "None" : num(ctx.lightning, 1),
+      { name: "Nearest lightning", unit_of_measurement: "km", device_class: "distance", state_class: "measurement", icon: "mdi:flash" });
     this.publish("binary_sensor", "safe_mode", safeMode ? "ON" : "OFF", { name: "Safe mode", device_class: "problem" });
     this.publish("binary_sensor", "dry_run", dryRun ? "ON" : "OFF", { name: "Dry run", icon: "mdi:test-tube" });
   }

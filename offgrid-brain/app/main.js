@@ -23,6 +23,7 @@ const { InverterSet } = require("./sources/inverters.js");
 const { readBattery, batteryEntities } = require("./sources/battery.js");
 const { SplinkPoller } = require("./sources/splink.js");
 const { SolarForecast, CompareForecast, withRange } = require("./sources/forecast.js");
+const { StormWatch } = require("./sources/storm.js");
 const { EcowittPoller } = require("./sources/ecowitt.js");
 const { SolarEstimator, isUnconstrained } = require("./policy/solar.js");
 const { pick, STALE_SEC } = require("./sources/pick.js");
@@ -92,6 +93,8 @@ async function main() {
   forecast.start();
   // A second forecast (Solcast) logged beside the first, for comparison only.
   const compareForecast = new CompareForecast({ ha, prefix: settings.sources.compare_forecast });
+  // Storm signal: BoM warnings and forecast, Blitzortung lightning (sources/storm.js).
+  const storm = new StormWatch({ ha, sources: settings.sources, ...settings.storm });
 
   const mqttCfg = opt.mqtt || {};
   const mqttSink = new MqttSink({
@@ -127,7 +130,9 @@ async function main() {
   let limits = null;
 
   function trackEntities() {
-    ha.track(Object.entries(settings.sources).filter(([k, v]) => v && k !== "compare_forecast").map(([, v]) => v));
+    ha.track(Object.entries(settings.sources).filter(([k, v]) => v && k !== "compare_forecast" && k !== "storm_forecast").map(([, v]) => v));
+    storm.configure({ sources: settings.sources, ...settings.storm });
+    ha.track(storm.entities());
     compareForecast.setPrefix(settings.sources.compare_forecast);
     ha.track(compareForecast.entities);
     ha.track(policy.devices.flatMap((d) => [d.switch, d.power_sensor]).filter(Boolean));
@@ -183,6 +188,7 @@ async function main() {
   let lastRunning = new Set();   // devices running after the last walk, for hysteresis
   let socHistory = [];           // recent [ms, soc], for the dwell rule at charge rungs
   let lastTick = null;   // what the timeline's projection starts from
+  let lastStorm = {};    // the storm variables last tick, to log their changes
   function timeline() {
     const now = Date.now();
     const past = recorder.since(now - 24 * 3600 * 1000);
@@ -382,9 +388,19 @@ async function main() {
       discovered: (sp.inverters || []).map((i) => ({ key: i.key, name: i.name, kwp: i.kwp })),
     };
 
+    const stormNow = storm.read(now.getTime());
+    if (stormNow.vars.storm !== lastStorm.storm || stormNow.vars.storm_ahead !== lastStorm.storm_ahead) {
+      const d = stormNow.detail;
+      log.info(`storm=${stormNow.vars.storm} storm_ahead=${stormNow.vars.storm_ahead}` +
+        `${d.warnings.length ? ` warnings: ${d.warnings.join("; ")}` : ""}${d.nearestKm != null ? ` lightning ${d.nearestKm} km` : ""}` +
+        `${d.forecast.length ? ` forecast: ${d.forecast.map((f) => `${f.day ? "tomorrow" : "today"} "${f.text}"`).join(", ")}` : ""}`);
+      if (lastStorm.storm != null) hourLog.event({ kind: "storm", ...stormNow.vars, ...d });
+      lastStorm = stormNow.vars;
+    }
     const ctx = buildContext({
       now,
       soc,
+      storm: stormNow.vars,
       pvKw: Number.isFinite(pvKw) ? pvKw : 0,   // unknown PV = assume none
       loadKw,
       toutC: Number.isFinite(toutEnt.value) ? toutEnt.value : 20,
@@ -446,6 +462,7 @@ async function main() {
         worstDayKwh: forecastKwh, next24Kwh: forecastNext24Kwh, days: fc.days, entries: fc.entries, ageSec: fc.ageSec,
       },
       ctx,
+      storm: stormNow.detail,
       result: summarise(result),
       devices: policy.devices.map((d) => ({ id: d.id, name: d.name, switch: d.switch || null, important: d.important !== false })),
     };

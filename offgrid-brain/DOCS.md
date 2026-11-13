@@ -398,8 +398,27 @@ diff against the simulator's defaults. A starter file is written on first run.
   gen-backed load, the brain raises a **deficit** and keeps it running.
 
 Expression variables: `occ dark sun hour dow weekend month soc pv surplus tout
-forecast used gap season autonomy`. `autonomy` is in **days** in conditions,
-as in the simulator; the panel, log and MQTT sensor show it in hours.
+forecast used gap season autonomy storm storm_ahead lightning`. `autonomy` is in
+**days** in conditions, as in the simulator; the panel, log and MQTT sensor show it
+in hours.
+
+**Storm signal** (Settings → Storm signal):
+- `storm` is 1 when a storm is on the house now: an active BoM thunderstorm,
+  severe-weather or cyclone warning for the area (the Bureau of Meteorology
+  integration's warnings sensor; marine warnings ignored), or lightning within
+  **Near** km (30) in the last **Window** minutes (30), from the Blitzortung
+  integration's strike counter and distance.
+- `storm_ahead` is 1 when BoM forecasts storms today or tomorrow (a lightning icon or
+  "storm" in the short summary; give the forecast entity prefix, e.g.
+  `sensor.tugrabakh`), or when `storm` is 1.
+- `lightning` is the km to the nearest strike in the window, 999 when none.
+
+The simulator has no weather, so there all three are always 0, 0 and 999. Changes are
+logged and written to the events log, the Live page shows a banner, and MQTT
+publishes **Storm**, **Storm ahead** and **Nearest lightning** for automations of your
+own. Example: bank charge before a storm with a rung like
+`{ "type": "charge", "to": 100 }` placed above the convenience loads, and gate those
+loads with `storm_ahead ? 0 : ...`.
 
 ## Safety
 

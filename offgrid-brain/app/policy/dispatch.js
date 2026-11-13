@@ -27,7 +27,8 @@ const Dwell = require("./dwell.js");
 
 // Must match sim.js VARS exactly, or policies are not portable between the two.
 const VARS = ["occ", "dark", "sun", "hour", "dow", "weekend", "month", "soc", "pv",
-              "surplus", "tout", "forecast", "used", "gap", "season", "autonomy"];
+              "surplus", "tout", "forecast", "used", "gap", "season", "autonomy",
+              "storm", "storm_ahead", "lightning"];
 
 function compiler() {
   const cache = new Map(), errors = [];

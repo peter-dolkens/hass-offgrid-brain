@@ -66,7 +66,7 @@ function autonomyOf({ socPct, capacityKwh, reservePct, expectedLoadKwh, forecast
 }
 
 /** Assemble the full variable set for dispatch.decide(). */
-function buildContext({ now, soc, pvKw, loadKw, toutC, forecastKwh, forecastNext24Kwh = forecastKwh, history, battery }) {
+function buildContext({ now, soc, pvKw, loadKw, toutC, forecastKwh, forecastNext24Kwh = forecastKwh, history, battery, storm = {} }) {
   const hour = now.getHours();
   const dow = (now.getDay() + 6) % 7;          // sim.js: 0 = Monday
   const doy = dayOfYear(now);
@@ -100,6 +100,10 @@ function buildContext({ now, soc, pvKw, loadKw, toutC, forecastKwh, forecastNext
       expectedLoadKwh,
       forecastKwh,
     }),
+    // sources/storm.js; the simulator has no weather, so it always sees no storm.
+    storm: storm.storm ? 1 : 0,
+    storm_ahead: storm.storm_ahead ? 1 : 0,
+    lightning: Number.isFinite(storm.lightning) ? storm.lightning : 999,
   };
 }
 

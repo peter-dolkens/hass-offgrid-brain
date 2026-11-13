@@ -317,7 +317,7 @@
       <ul class="problems" id="dproblems" hidden></ul>
     </div>
     <datalist id="dl-soc"></datalist><datalist id="dl-power"></datalist><datalist id="dl-temperature"></datalist>
-    <datalist id="dl-energy"></datalist><datalist id="dl-irradiance"></datalist><datalist id="dl-switchable"></datalist>
+    <datalist id="dl-energy"></datalist><datalist id="dl-irradiance"></datalist><datalist id="dl-switchable"></datalist><datalist id="dl-sensor"></datalist>
   </section>
 </main>
 
@@ -392,6 +392,12 @@ function renderLive() {
   const banners = [];
   if (s.safeMode) banners.push(`<div class="banner bad">Safe mode: no fresh battery reading, so the brain assumes the ${s.battery.reserve_pct}% reserve and sheds everything discretionary.</div>`);
   if (s.result.deficitKw > 0) banners.push(`<div class="banner warn">Deficit ${watts(s.result.deficitKw)}: loads that can't be shed need more than solar and battery can supply.</div>`);
+  const st = s.storm;
+  if (st && (s.ctx.storm || s.ctx.storm_ahead)) {
+    const why = [...st.warnings, ...(st.nearestKm != null ? [`lightning ${fmt(st.nearestKm, 0)} km away`] : []),
+      ...st.forecast.map((f) => `${f.day ? "tomorrow" : "today"}: ${f.text}`)];
+    banners.push(`<div class="banner ${s.ctx.storm ? "bad" : "warn"}">${s.ctx.storm ? "Storm now" : "Storm ahead"}: ${esc(why.join(" · "))}</div>`);
+  }
   if (s.result.errors.length) banners.push(`<div class="banner warn">Policy expression errors: ${esc(s.result.errors.join("; "))}</div>`);
   if (tickAge > 3 * s.tickSec) banners.push(`<div class="banner warn">No tick for ${Math.round(tickAge)} s.</div>`);
   $("banners").innerHTML = banners.join("");
@@ -1156,6 +1162,12 @@ const FIELDS = [
   ["Readings from Home Assistant", "sources.outdoor_temp", "entity", "Outdoor temperature", "", "temperature"],
   ["Readings from Home Assistant", "sources.pv_forecast_today", "entity", "Solar forecast override", "kWh for the day. Leave empty to use the forecasts attached to solar in HA's Energy dashboard (e.g. Forecast.Solar).", "energy"],
   ["Readings from Home Assistant", "sources.compare_forecast", "text", "Comparison forecast", "Entity prefix of a second forecast to log beside the first in the hourly log, e.g. sensor.solcast_pv_forecast (Solcast). Logged only; the brain doesn't plan with it.", null],
+  ["Storm signal", "sources.storm_warnings", "entity", "BoM warnings", "The Bureau of Meteorology integration's warnings sensor. Thunderstorm, severe-weather and cyclone warnings raise storm.", "sensor"],
+  ["Storm signal", "sources.storm_forecast", "text", "BoM forecast", "Entity prefix of the BoM daily forecast sensors, e.g. sensor.tugrabakh. Storms forecast today or tomorrow raise storm_ahead.", null],
+  ["Storm signal", "sources.lightning_counter", "entity", "Lightning counter", "Blitzortung's strike counter.", "sensor"],
+  ["Storm signal", "sources.lightning_distance", "entity", "Lightning distance", "Blitzortung's distance to the latest strike.", "sensor"],
+  ["Storm signal", "storm.near_km", "number", "Near (km)", "Lightning this close raises storm."],
+  ["Storm signal", "storm.window_min", "int", "Window (min)", "How long a strike counts."],
   ["SP PRO bridge (splink)", "splink.enabled", "bool", "Enabled", "The connection the battery and inverters use when their integration is the bridge."],
   ["SP PRO bridge (splink)", "splink.urls", "list", "URLs", "One per line, tried in order: LAN first, tunnel second."],
   ["SP PRO bridge (splink)", "splink.poll_seconds", "int", "Full read (s)", "PV and energy counters."],
@@ -1175,6 +1187,7 @@ const KINDS = {
   energy: (e) => e.domain === "sensor" && (e.device_class === "energy" || /^(k?Wh)$/.test(e.unit || "")),
   irradiance: (e) => e.domain === "sensor" && (e.device_class === "irradiance" || /W\/m/.test(e.unit || "")),
   switchable: (e) => SWITCHABLE.includes(e.domain),
+  sensor: (e) => e.domain === "sensor",
 };
 
 let settingsSaved = null, entities = [], devicesSaved = null;

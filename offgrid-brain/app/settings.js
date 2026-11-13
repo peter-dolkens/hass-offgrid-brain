@@ -42,7 +42,12 @@ const DEFAULTS = Object.freeze({
   // Readings that don't belong to the battery or an inverter.
   // compare_forecast: entity prefix of a second forecast logged beside the one the
   // brain plans with, e.g. "sensor.solcast_pv_forecast" (Solcast's detailedHourly).
-  sources: { outdoor_temp: "", pv_forecast_today: "", irradiance: "", compare_forecast: "" },
+  // Storm signal (sources/storm.js): BoM warnings sensor, BoM forecast entity prefix
+  // (e.g. sensor.tugrabakh), and Blitzortung's lightning distance and counter.
+  sources: { outdoor_temp: "", pv_forecast_today: "", irradiance: "", compare_forecast: "",
+             storm_warnings: "", storm_forecast: "", lightning_distance: "", lightning_counter: "" },
+  // Lightning within near_km in the last window_min minutes counts as a storm on the house.
+  storm: { near_km: 30, window_min: 30 },
   splink: { enabled: false, urls: [], poll_seconds: 15, fast_seconds: 3 },
   ecowitt: { enabled: false, urls: [], poll_seconds: 10 },
   // One entry per AC-coupled solar inverter, each read through its own
@@ -50,7 +55,7 @@ const DEFAULTS = Object.freeze({
   solar: { inverters: [] },
 });
 
-const SECTIONS = ["battery", "autonomy", "sources", "splink", "ecowitt", "solar"];
+const SECTIONS = ["battery", "autonomy", "sources", "storm", "splink", "ecowitt", "solar"];
 
 /* How an inverter's output is read:
      bridge  the SP PRO bridge's Fronius readings, by the bridge's inverter key
@@ -171,6 +176,9 @@ function check(s) {
   const a = s.autonomy || {};
   if (!num(a.seed_load_kwh, 0, 10000)) p.push("autonomy seed load must be >= 0 kWh");
   if (!num(a.window_days, 1, 30) || !Number.isInteger(a.window_days)) p.push("autonomy window must be 1-30 whole days");
+  const st = s.storm || {};
+  if (!num(st.near_km, 1, 1000)) p.push("storm: lightning distance must be 1-1000 km");
+  if (!num(st.window_min, 1, 1440)) p.push("storm: lightning window must be 1-1440 minutes");
   for (const [k, v] of Object.entries(s.sources || {})) {
     if (v && !ENTITY_RE.test(v)) p.push(`source ${k}: "${v}" isn't an entity id`);
   }

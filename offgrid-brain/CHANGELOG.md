@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.33.0
+- **Storm signal.** Three new policy variables: `storm` (a BoM thunderstorm,
+  severe-weather or cyclone warning, or lightning within 30 km in the last 30 min),
+  `storm_ahead` (storms forecast by BoM today or tomorrow, or `storm`) and
+  `lightning` (km to the nearest recent strike, 999 none). Sources are the Bureau of
+  Meteorology and Blitzortung integrations, set in Settings → Storm signal. A banner
+  on Live, log lines and events, and MQTT entities (Storm, Storm ahead, Nearest
+  lightning). The simulator knows the variables too and always sees no storm.
+
 ## 0.32.0
 - **Solar available energy.** A new lifetime counter,
   `sensor.offgrid_brain_solar_available_energy` (kWh, total increasing): what the
