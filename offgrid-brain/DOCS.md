@@ -416,9 +416,13 @@ in hours.
 The simulator has no weather, so there all three are always 0, 0 and 999. Changes are
 logged and written to the events log, the Live page shows a banner, and MQTT
 publishes **Storm**, **Storm ahead** and **Nearest lightning** for automations of your
-own. Example: bank charge before a storm with a rung like
-`{ "type": "charge", "to": 100 }` placed above the convenience loads, and gate those
-loads with `storm_ahead ? 0 : ...`.
+own.
+
+Off grid there is no grid to lose, so a storm isn't a reason to bank charge: the dull
+days it brings are already in the solar forecast (and the projection plans on its low
+case). The signal is for protecting equipment from lightning: e.g. hold a bore or
+water pump, outdoor loads or EV charging off while lightning is near, with a
+condition like `storm ? 0 : 1` on their entries.
 
 ## Safety
 
