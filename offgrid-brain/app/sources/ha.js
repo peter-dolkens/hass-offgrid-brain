@@ -47,14 +47,23 @@ class HAClient {
     ]);
     const areaName = new Map(areas.map((a) => [a.area_id, a.name]));
     const deviceArea = new Map(devices.map((d) => [d.id, d.area_id]));
+    const deviceName = new Map(devices.map((d) => [d.id, d.name_by_user || d.name || ""]));
     const reg = new Map(entities.map((e) => [e.entity_id, e]));
+    // Home Assistant 2026.11 names device and entity once each (friendly_name is
+    // deprecated): compose "Device Entity" from the registries, falling back to the
+    // state's friendly_name for entities outside the registry.
+    const composed = (r, st) => {
+      const ent = r.name || r.original_name || "", dev = r.device_id ? deviceName.get(r.device_id) || "" : "";
+      const n = [dev, ent].filter(Boolean).join(" ");
+      return n || (st.attributes && st.attributes.friendly_name) || st.entity_id;
+    };
     return states.map((st) => {
       const r = reg.get(st.entity_id) || {};
       const area = r.area_id || deviceArea.get(r.device_id) || null;
       return {
         entity_id: st.entity_id,
         domain: st.entity_id.split(".")[0],
-        name: (st.attributes && st.attributes.friendly_name) || st.entity_id,
+        name: composed(r, st),
         state: st.state,
         unit: (st.attributes && st.attributes.unit_of_measurement) || null,
         device_class: (st.attributes && st.attributes.device_class) || null,
@@ -118,6 +127,12 @@ class HAClient {
       this.pending.set(id, { resolve, reject });
       this.ws.send(JSON.stringify({ ...payload, id }));
     });
+  }
+
+  /** An entity's mirrored state: { state, attributes, ageSec }, or null if not mirrored. */
+  entity(entityId) {
+    const s = entityId && this.states.get(entityId);
+    return s ? { state: s.state, attributes: s.attributes, ageSec: (Date.now() - s.updated) / 1000 } : null;
   }
 
   /** Numeric value of an entity, with age in seconds. NaN when absent/unavailable. */

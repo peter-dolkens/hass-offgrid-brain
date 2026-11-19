@@ -368,6 +368,161 @@ mqtt:
   password: "..."
 ```
 
+## Climate brain
+
+The climate brain plans heating and cooling per **zone** and offers each zone to the
+dispatch list as a set of **comfort levels**, so the battery decides how much comfort
+it can afford, and shedding climate widens a room's band by degrees before anything
+is switched off. It learns from history: the setpoints people choose, when rooms are
+occupied, how fast each room heats and cools, and what each unit really draws. It
+is off until enabled in Settings → **Climate brain**, and like everything else it
+only advises in dry run. A zone with no outputs is **advisory**: planned, shown and
+counted in the projection, never switched. Design notes: `docs/climate-design.md`.
+
+### Zones
+
+Settings → **Climate zones**, one tile per zone (stored in `settings.json` under
+`climate.zones`):
+
+| Field | |
+|---|---|
+| Name, area, floor area | The area names the zone's MQTT device; the floor area seeds its thermal model. |
+| Temperature sensors | One or more, averaged. With no reading the zone offers nothing. |
+| Humidity | Optional. Above 70% the cooling setpoint drops 1 °C. |
+| Presence | Any number of occupancy, motion or presence entities, OR'ed: the wasp-in-a-box template binary_sensors, PIRs, `person`/`device_tracker`, or a count. `unavailable`/`unknown` is **unknown**, not empty: with no known reading the zone uses its learned pattern. A zone stays occupied for **Vacancy delay** after its sensors clear. |
+| Windows and doors | Any one open for **Window delay** (60 s) turns the zone off. |
+| Heat to / Cool to / Setback | Per-zone overrides of the defaults; blank heat/cool means learned. |
+| Energy class, priority | Where its levels go in the list when it has no entries of its own (below). |
+| Takes over load | A load in the policy whose `sp` rules now drive this zone (below). |
+| Outputs | **A/C**: a climate entity, heat and/or cool. **Hydronic**: a zone thermostat (climate entity) or a valve/pump switch, with an optional shared **heat source** (boiler or heat pump, climate or switch) that runs while any of its zones calls. Each has kW, minimum run and off times (A/C 300/300 s, hydronic 180/180 s), and optional meters. |
+
+**Meters.** Give each output its circuit's **power meter** (a Shelly Pro 3EM channel,
+W or kW) and the brain treats it as the truth: the thermal model is fit on the
+measured draw, a **consumption curve** is learned per unit and side (running kW
+against the lift between setpoint and outdoor temperature) and replaces the
+nameplate kW once it has enough data, so planned power and the projection's kWh use
+what the unit really draws. A unit that says it's heating or cooling, or that the
+brain commanded, but reads ~0 W for 10 minutes is flagged (and one drawing power while
+off), on Live and as the zone's **Unit problem** entity. An **energy meter** (kWh)
+stands in when there's no power meter. Several outputs may name the **same meter** (a
+shared circuit): its reading is split over the outputs that say they're running, by
+their kW, which is approximate. A hydronic heat source's own meter (**Source meter**)
+is shared over the zones calling for it in the same way. Without meters the
+configured kW is used while a unit says it's running.
+
+The defaults (Settings → Climate brain): heat to 20 °C, cool to 25 °C, setback 3 °C,
+away 6 °C, soak 3 °C, protect between 10 and 32 °C, pre-conditioning up to 120 min
+ahead, occupancy threshold 0.5, hand changes respected for 120 min, 14 days of
+history to learn from on first start. **House presence** (optional, e.g. a group of
+people: off/not_home = away) widens every band to the away setback and stops
+pre-conditioning. **Weather forecast**: a weather entity with an hourly (else daily)
+forecast; without one the recorded last day's outdoor temperature is used.
+
+### What it learns
+
+- **Preferences.** Every setpoint change the brain didn't make is learned, for the
+  zone, weekday or weekend, hour of day, and heat or cool, spread over neighbouring
+  hours and fading with a 21-day half-life. A setting left alone counts a little
+  each hour. The comfort setpoints move from the defaults toward what was learned as
+  confidence grows. When the brain is actuating and someone changes what it set,
+  that's an **override**: learned more strongly, and left alone for **Respect changes
+  by hand** minutes (unless the battery forces the zone off entirely).
+- **Occupancy.** Each hour's occupied fraction, by hour of the week (28-day half-life),
+  leaning on weekday/weekend patterns and then the house schedule where there is
+  little data. It predicts when a room will next be occupied.
+- **Thermal model.** Per zone, `dT/dt = a (Tout − T) + bh·Pheat − bc·Pcool + g`, fit
+  online over 15-minute windows (the heat delivered is COP × the electrical kW; the
+  fit absorbs the COP). It predicts the power to reach a setpoint, how long warm-up
+  takes, and how long a room coasts.
+- On first start each zone replays **Learn from history** days of Home Assistant
+  history (its sensors, thermostats, meters and the outdoor temperature) through the
+  same learning, once.
+
+Learning lives in `/data/climate.json`.
+
+### Comfort levels and the ladder
+
+Each tick a zone picks its side (heat or cool: from the room against its band, else
+which way it's drifting) and offers five levels. `sp` is the offset from the comfort
+setpoint toward ambient, the same `sp` the simulator uses:
+
+| Level | Holds | Offered when |
+|---|---|---|
+| `protect` | 10 °C heating / 32 °C cooling | always |
+| `setback` | comfort ± setback (away: ± away; +1 °C when the low-case projection is tight) | always |
+| `comfort` | the comfort setpoint | occupied (or held at a person's setting) |
+| `precondition` | the comfort setpoint, reached by the predicted arrival | empty, but likely occupied within the warm-up lead the model predicts; not when away, nor long leads when tight |
+| `soak` | up to `soak` °C past the setpoint toward the band's far edge (pre-cool before a hot afternoon, pre-heat before a cold night) | sun now, a need later in the forecast, and surplus forecast (the low-case projection reaches full) or comfort projected to shed later |
+
+Each level's kW is the power to reach its setpoint within the hour (pre-conditioning:
+by the arrival time), at least the steady-state power to hold it, capped at the
+outputs' rating: modelled, not a nameplate. The walk then grants levels like any
+other load, and the zone gets the **tightest level granted**. A level costing nothing
+more than one already granted counts as granted. So as the battery drops, a zone
+loses soak, then pre-conditioning, then comfort (its band widens to the setback),
+then the setback (protection only); a room on the comfortable side of its granted
+setpoint **coasts** with the unit off, and the panel shows how long it will hold. Only
+when even protection can't be granted is it **shed**.
+
+Place levels in the list yourself with a `climate` entry:
+
+```json
+{ "type": "climate", "zone": "office", "level": "comfort", "cond": "autonomy > 1" }
+```
+
+`cond` is optional and ANDed with the planner's own condition; `important` overrides
+the default. A zone with no entries is **placed automatically** by its energy class,
+each level at the end of the segment after the first charge rung at or above:
+
+| Class | protect | setback | comfort | precondition | soak |
+|---|---|---|---|---|---|
+| essential | first rung (important) | first rung (important) | 40% (important) | 60% | end of list |
+| comfort | first rung (important) | 40% | 60% | 80% | end of list |
+| luxury | 40% | 60% | 80% | none | end of list |
+
+Within the same place, lower **priority** goes first. In entries for a zone, `occ` is
+the zone's own occupancy and `gap` is |outdoor − comfort setpoint|, as the simulator
+gives its zones.
+
+**The old zone rules still work.** A policy written for the simulator has zone loads
+like `{ "dev": "amber", "cond": "occ", "sp": 5 }`: "while occupied, hold within 5 °C
+of the setpoint". Set the zone's **Takes over load** to `amber` and those entries
+drive the zone unchanged, now with the modelled kW for that `sp` instead of the
+load's nameplate, the zone's own `occ` and a real `gap`. The mapping to levels:
+
+| Old rule | New level |
+|---|---|
+| `cond: "gap > 10 ? 1 : 0", sp: 4` (way off target) | `protect` (or `setback`) |
+| `cond: "occ", sp: 5` / `sp: 3` (minimal / better comfort) | `setback` (setback_c 3–5) |
+| `cond: "hour>=5", sp: 3` (pre-condition) | `precondition` (from the learned occupancy, not a fixed hour) |
+| `cond: "occ and autonomy>1.5 ? 1 : 0", sp: 0` | `comfort` with `cond: "autonomy > 1.5"` |
+| `cond: "surplus>2 ? 1 : 0", sp: -2` (soak) | `soak` |
+
+Without **Takes over load** such a device stays an ordinary switched load.
+
+**Projection.** The Live timeline's projection plans each zone at every step (the band
+held, the learned occupancy, the forecast outdoor temperature), adds the climate kW
+the walk grants to the projected load, and takes the recorded climate draw out of
+the last-day load profile so it isn't counted twice.
+
+### Control
+
+In dry run the brain logs and shows what it would set ("would set heat 20 °C") and
+calls nothing. Live, it sets each climate entity's mode and setpoint (rounded to
+0.5 °C), switches valves and pumps around the setpoint with a little hysteresis, runs
+a shared heat source while any zone calls, and holds every output to its minimum run
+and off times (a heat ↔ cool change counts as stopping). A zone held at a person's
+setting isn't commanded. A zone's devices are the climate brain's: the switch
+actuator leaves them alone.
+
+### Climate on MQTT
+
+Each zone is its own **Climate zone** device in its area, a child (`via_device`) of the
+Off-Grid Brain device: Temperature, Target, Mode, Comfort level, Reason, Band low,
+Band high, Occupied, Occupancy likelihood, Planned power, and diagnostics Model
+confidence, Preference confidence and Unit problem. Entity ids are
+`sensor.offgrid_brain_<zone>_<key>`. A removed zone's entities are removed.
+
 ## The policy file
 
 The dispatch list lives at `/config/policy.json` (the add-on's config dir), not in
@@ -389,6 +544,8 @@ diff against the simulator's defaults. A starter file is written on first run.
 
 - `{"type":"charge","to":Y}`: fill the battery to Y% here, **and** act as a
   discharge **floor**, so no entry below may pull the battery under Y%.
+- `{"type":"climate","zone":...,"level":...,"cond":...}`: a climate zone's comfort
+  level (see Climate brain).
 - `{"type":"load","dev":...,"cond":...,"gen":...}`: run `dev` when `cond`
   evaluates 0–1. A device may appear **several times** for progressive service
   levels; deeper entries are only reached if power remains at that depth.
@@ -398,7 +555,8 @@ diff against the simulator's defaults. A starter file is written on first run.
   gen-backed load, the brain raises a **deficit** and keeps it running.
 
 Expression variables: `occ dark sun hour dow weekend month soc pv surplus tout
-forecast used gap season autonomy storm storm_ahead lightning`. `autonomy` is in
+forecast used gap season autonomy storm storm_ahead lightning`. In entries for a
+climate zone, `occ` and `gap` are the zone's own (see Climate brain). `autonomy` is in
 **days** in conditions, as in the simulator; the panel, log and MQTT sensor show it
 in hours.
 
@@ -443,9 +601,11 @@ condition like `storm ? 0 : 1` on their entries.
 
 ## Known gaps
 
-- `used` (per-device daily budgets) and `gap` (zone temperature delta) are always 0,
-  so policies relying on them behave as if the value were zero. Zone thermal
-  dispatch isn't implemented yet; this release handles switchable loads.
+- `used` (per-device daily budgets) is always 0, so policies relying on it behave as
+  if it were zero. `gap` is 0 except in entries for a climate zone.
+- The climate brain has no hardware to drive yet: it has only been run in dry run,
+  against simulated zones. The hydronic support assumes a thermostat or valve per
+  zone and an on/off heat source; flow-temperature control isn't modelled.
 - `forecast` approximates the simulator's "next 24 h PV ÷ seasonal median" using the
   next 24 h of forecast over trailing mean load, and is 1.0 when there is no forecast.
   The simulator has perfect foresight and the brain has a forecast with error. This is the largest

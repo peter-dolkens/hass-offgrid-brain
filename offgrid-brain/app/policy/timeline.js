@@ -29,7 +29,7 @@ const { decide } = require("./dispatch.js");
 const { seasonOf, houseOcc, dayOfYear, autonomyOf } = require("./context.js");
 
 const MIN = 60 * 1000, HOUR = 60 * MIN;
-const NUMS = ["soc", "loadKw", "pvKw", "availKw", "battKw", "irr", "irrHeld", "tout", "dcV"];
+const NUMS = ["soc", "loadKw", "pvKw", "availKw", "battKw", "irr", "irrHeld", "tout", "dcV", "climKw"];
 
 class Recorder {
   constructor({ keepHours = 26, stepSec = 60 } = {}) {
@@ -103,13 +103,15 @@ class Recorder {
 
 /** Load (kW) by time of day from recorded samples: the mean of each hour of the
     day, falling back to the overall mean, then to `fallbackKw`. */
-function loadProfile(samples, fallbackKw) {
+function loadProfile(samples, fallbackKw, { lessClimate = false } = {}) {
   const sum = new Array(24).fill(0), n = new Array(24).fill(0);
   let all = 0, alln = 0;
   for (const s of samples) {
     if (!Number.isFinite(s.loadKw)) continue;
+    // With the climate brain projecting its own load, the recorded climate draw is taken out.
+    const kw = lessClimate && Number.isFinite(s.climKw) ? Math.max(0, s.loadKw - s.climKw) : s.loadKw;
     const h = new Date(s.t).getHours();
-    sum[h] += s.loadKw; n[h]++; all += s.loadKw; alln++;
+    sum[h] += kw; n[h]++; all += kw; alln++;
   }
   const mean = alln ? all / alln : fallbackKw;
   return (t) => { const h = new Date(t).getHours(); return n[h] ? sum[h] / n[h] : Number.isFinite(mean) ? mean : 0; };
@@ -148,8 +150,11 @@ function forecastAt(hourly) {
  *   load         (t) => kW
  *   autonomy     { expectedLoadKwh, forecastKwh } for each step's autonomy
  *   overheadKw   the inverter's own draw, on top of the load (learnOverhead)
+ *   expand       optional (t, ctx) => policy for that step: the climate brain's zones
+ *                with their projected comfort levels. The kW the walk grants to climate
+ *                devices is added to the step's load (`load` should exclude it).
  */
-function project({ now, soc, ctx, policy, limits, battery, forecast, load, autonomy = {}, overheadKw = 0, running = [], history = [], hours = 24, stepMin = 30 }) {
+function project({ now, soc, ctx, policy, limits, battery, forecast, load, autonomy = {}, overheadKw = 0, running = [], history = [], hours = 24, stepMin = 30, expand = null }) {
   let wasRunning = new Set(running);   // hysteresis carries from step to step, as it does tick to tick
   const hist = history.slice();        // and the dwell rule sees the projected battery %
   const pvAt = forecastAt(forecast || []);
@@ -160,7 +165,7 @@ function project({ now, soc, ctx, policy, limits, battery, forecast, load, auton
   for (let k = 0; k <= steps; k++) {
     const t = now + k * stepMin * MIN, d = new Date(t);
     const fc = pvAt(t), known = Number.isFinite(fc), pv = known ? fc : 0;
-    const loadKw = Math.max(0, load(t));
+    let loadKw = Math.max(0, load(t));
     const hour = d.getHours(), dow = (d.getDay() + 6) % 7;
     const c = {
       ...ctx, hour, dow, weekend: dow >= 5 ? 1 : 0, month: d.getMonth() + 1, season: seasonOf(dayOfYear(d)),
@@ -169,13 +174,15 @@ function project({ now, soc, ctx, policy, limits, battery, forecast, load, auton
       autonomy: autonomyOf({ socPct: s, capacityKwh: cap, reservePct: reserve, ...autonomy }),
     };
     if (k > 0) hist.push([t, s]);
-    const r = decide(policy, c, limits, wasRunning, hist);
+    const r = decide(expand ? expand(t, c) : policy, c, limits, wasRunning, hist);
     wasRunning = new Set(r.decisions.filter((x) => x.run).map((x) => x.id));
+    const climateKw = r.decisions.reduce((s2, x) => s2 + (x.climate && x.run ? x.kw : 0), 0);
+    loadKw += climateKw;
     const chargeRoom = s < 99.5 ? battery.max_charge_kw : 0;
     const used = Math.min(pv, loadKw + overheadKw + chargeRoom);
     const battKw = used - loadKw - overheadKw;
     out.push({
-      t, soc: +s.toFixed(2), loadKw: +loadKw.toFixed(4), pvKw: +used.toFixed(4), availKw: known ? +pv.toFixed(4) : null, battKw: +battKw.toFixed(4) || 0,
+      t, soc: +s.toFixed(2), loadKw: +loadKw.toFixed(4), ...(expand ? { climateKw: +climateKw.toFixed(4) } : {}), pvKw: +used.toFixed(4), availKw: known ? +pv.toFixed(4) : null, battKw: +battKw.toFixed(4) || 0,
       run: r.decisions.filter((x) => x.run).map((x) => x.id), shed: r.shed.map((x) => x.id), flagged: r.flagged.map((x) => x.id), floorPct: r.floorPct,
       deficit: s <= reserve + 0.01 && battKw < -0.01, forecast: known,
     });

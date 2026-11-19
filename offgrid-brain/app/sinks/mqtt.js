@@ -66,6 +66,7 @@ class MqttSink {
     this.broker = broker;
     this.client = null;
     this.announced = new Set();
+    this.zoneKeys = new Map();   // climate zone id -> Set of "component/key" announced for it
   }
 
   connect() {
@@ -97,7 +98,7 @@ class MqttSink {
     this.client.on("error", (e) => log.warn("MQTT error", e.message));
   }
 
-  _announce(component, key, cfg) {
+  _announce(component, key, cfg, device = DEVICE) {
     const id = `${component}/${key}`;
     if (this.announced.has(id)) return;
     this.client.publish(`${this.prefix}/${component}/offgrid_brain/${key}/config`, JSON.stringify({
@@ -107,15 +108,62 @@ class MqttSink {
       has_entity_name: true,
       state_topic: `offgrid_brain/${key}`,
       availability_topic: STATUS,
-      device: DEVICE,
+      device,
     }), { retain: true });
     this.announced.add(id);
   }
 
-  publish(component, key, value, cfg) {
+  publish(component, key, value, cfg, device) {
     if (!this.enabled || !this.client || !this.client.connected) return;
-    this._announce(component, key, cfg);
+    this._announce(component, key, cfg, device);
     this.client.publish(`offgrid_brain/${key}`, String(value), { retain: true });
+  }
+
+  /* Each climate zone is a child device of the brain (via_device), named once:
+     the device is "Climate zone" in the zone's area, and its entities are short
+     ("Target", "Mode"), as Home Assistant 2026.11's naming composes them. */
+  publishClimate(snap) {
+    if (!this.enabled || !this.client || !this.client.connected || !snap) return;
+    const live = new Set();
+    for (const z of snap.zones || []) {
+      live.add(z.id);
+      const keys = this.zoneKeys.get(z.id) || new Set();
+      this.zoneKeys.set(z.id, keys);
+      const device = {
+        identifiers: [`offgrid_brain_climate_${z.id}`], name: "Climate zone", via_device: "offgrid_brain",
+        manufacturer: "Off-Grid Brain", model: "Climate zone", suggested_area: z.area || z.name,
+      };
+      const pub = (component, key, value, cfg) => { keys.add(`${component}/climate_${z.id}_${key}`); this.publish(component, `climate_${z.id}_${key}`, value, cfg, device); };
+      const p = z.plan || {}, d = z.decision || {}, temp = { unit_of_measurement: "°C", device_class: "temperature", state_class: "measurement" };
+      pub("sensor", "temperature", num(p.temp, 1), { name: "Temperature", ...temp });
+      pub("sensor", "target", num(d.mode === "heat" || d.mode === "cool" ? d.setpoint : NaN, 1), { name: "Target", ...temp, icon: "mdi:thermostat" });
+      pub("sensor", "mode", d.mode || "off", { name: "Mode", device_class: "enum", options: ["heat", "cool", "off", "manual"], icon: "mdi:hvac" });
+      pub("sensor", "level", d.level || "none", { name: "Comfort level", device_class: "enum",
+        options: ["protect", "setback", "comfort", "precondition", "soak", "rule", "none"], icon: "mdi:stairs" });
+      pub("sensor", "reason", String(d.reason || "").slice(0, 255), { name: "Reason", icon: "mdi:text-box-outline" });
+      pub("sensor", "comfort_low", num(z.band ? z.band.low : NaN, 1), { name: "Band low", ...temp, icon: "mdi:thermometer-chevron-down" });
+      pub("sensor", "comfort_high", num(z.band ? z.band.high : NaN, 1), { name: "Band high", ...temp, icon: "mdi:thermometer-chevron-up" });
+      pub("binary_sensor", "occupied", p.occupied ? "ON" : "OFF", { name: "Occupied", device_class: "occupancy" });
+      pub("sensor", "occupancy_forecast", num(Number.isFinite(p.occProb) ? p.occProb * 100 : NaN, 0),
+        { name: "Occupancy likelihood", unit_of_measurement: "%", state_class: "measurement", icon: "mdi:account-clock" });
+      pub("sensor", "model_confidence", num(z.model ? z.model.confidence * 100 : NaN, 0),
+        { name: "Model confidence", unit_of_measurement: "%", state_class: "measurement", icon: "mdi:chart-bell-curve", entity_category: "diagnostic" });
+      pub("sensor", "preference_confidence", num(p.comfort ? p.comfort.confidence * 100 : NaN, 0),
+        { name: "Preference confidence", unit_of_measurement: "%", state_class: "measurement", icon: "mdi:account-check", entity_category: "diagnostic" });
+      pub("sensor", "planned_power", num((d.kw || 0) * 1000, 0), { name: "Planned power", unit_of_measurement: "W", device_class: "power", state_class: "measurement" });
+      pub("binary_sensor", "unit_problem", (z.flags || []).length ? "ON" : "OFF", { name: "Unit problem", device_class: "problem", entity_category: "diagnostic" });
+    }
+    // Zones that were removed: drop their entities from Home Assistant.
+    for (const [id, keys] of this.zoneKeys) {
+      if (live.has(id)) continue;
+      for (const k of keys) {
+        const [component, key] = k.split("/");
+        this.client.publish(`${this.prefix}/${component}/offgrid_brain/${key}/config`, "", { retain: true });
+        this.client.publish(`offgrid_brain/${key}`, "", { retain: true });
+        this.announced.delete(k);
+      }
+      this.zoneKeys.delete(id);
+    }
   }
 
   publishSolar(solar, power) {

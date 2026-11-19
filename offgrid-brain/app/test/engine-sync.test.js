@@ -34,3 +34,10 @@ const brainVars = require("../policy/dispatch.js").VARS;
 const same = simVars.length === brainVars.length && simVars.every((v, i) => v === brainVars[i]);
 if (same) console.log(`  ok  VARS identical in both engines (${brainVars.length})`);
 else { console.error(`  FAIL VARS differ\n       sim:   ${simVars.join(",")}\n       brain: ${brainVars.join(",")}`); process.exitCode = 1; }
+
+// So must the climate levels the brain plans and the simulator models.
+const lm = simSrc.match(/const CLIMATE_LEVELS = \[([^\]]+)\]/);
+const simLevels = lm ? lm[1].split(",").map((s) => s.trim().replace(/"/g, "")).filter(Boolean) : [];
+const brainLevels = require("../climate/levels.js").LEVELS;
+if (simLevels.join() === brainLevels.join()) console.log(`  ok  climate levels identical in both engines (${brainLevels.join(", ")})`);
+else { console.error(`  FAIL climate levels differ\n       sim:   ${simLevels.join(",")}\n       brain: ${brainLevels.join(",")}`); process.exitCode = 1; }

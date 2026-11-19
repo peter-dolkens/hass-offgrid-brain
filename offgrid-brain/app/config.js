@@ -11,6 +11,7 @@ const path = require("path");
 const log = require("./log.js");
 const Expr = require("./policy/expr.js");
 const { VARS } = require("./policy/dispatch.js");
+const { LEVELS } = require("./climate/levels.js");
 
 const OPTIONS_PATH = process.env.OPTIONS_PATH || "/data/options.json";
 const POLICY_PATH = process.env.POLICY_PATH || "/config/policy.json";
@@ -68,7 +69,19 @@ function check(policy) {
     if (d.important != null && typeof d.important !== "boolean") problems.push(`device "${d.id}" "important" must be true or false`);
   }
   for (const [i, e] of policy.list.entries()) {
-    if (!e || (e.type !== "load" && e.type !== "charge")) { problems.push(`list[${i}] "type" must be "load" or "charge"`); continue; }
+    if (!e || (e.type !== "load" && e.type !== "charge" && e.type !== "climate")) { problems.push(`list[${i}] "type" must be "load", "charge" or "climate"`); continue; }
+    if (e.type === "climate") {
+      // A climate zone's comfort level (climate/ladder.js). Whether the zone exists is
+      // a settings question: an unknown zone is shown as ignored, not refused.
+      if (typeof e.zone !== "string" || !/^[a-z0-9_]+$/.test(e.zone)) problems.push(`list[${i}] climate entry needs a "zone" id`);
+      if (!LEVELS.includes(e.level)) problems.push(`list[${i}] climate "level" must be one of ${LEVELS.join(", ")}`);
+      if (e.important != null && typeof e.important !== "boolean") problems.push(`list[${i}] (${e.zone}) "important" must be true or false`);
+      if (e.cond != null && String(e.cond).trim() !== "") {
+        const c = Expr.compile(String(e.cond), VARS);
+        if (!c.ok) problems.push(`list[${i}] (${e.zone} ${e.level}) condition: ${c.error}`);
+      }
+      continue;
+    }
     if (e.type === "charge" && !(typeof e.to === "number" && e.to >= 0 && e.to <= 100)) problems.push(`list[${i}] charge rung "to" must be 0-100`);
     if (e.type === "load") {
       if (!ids.has(e.dev)) problems.push(`list[${i}] references unknown device "${e.dev}"`);

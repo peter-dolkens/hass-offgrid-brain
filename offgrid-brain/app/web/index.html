@@ -139,6 +139,24 @@
   .split { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--idle-bg); margin-top: 6px; max-width: 280px; }
   .split .pv { background: var(--pv); } .split .batt { background: var(--batt); } .split .short { background: var(--bad); }
   .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+  /* Climate zones */
+  .zones { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; padding: 14px; }
+  .zone { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--bg); display: flex; flex-direction: column; gap: 6px; }
+  .zone .top { display: flex; align-items: baseline; gap: 8px; }
+  .zone .top b { font-size: 15px; }
+  .zone .temp { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .zone .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 12px; }
+  .zone .kv span:nth-child(odd) { color: var(--muted); }
+  .zone .why { font-size: 12px; color: var(--muted); }
+  .zone .flag { font-size: 12px; color: var(--bad); }
+  .bandbar { position: relative; height: 8px; border-radius: 4px; background: var(--track); margin: 4px 0; }
+  .bandbar .b { position: absolute; top: 0; bottom: 0; background: var(--good-bg); border: 1px solid var(--good); border-radius: 4px; }
+  .bandbar .now { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--text); }
+  .chip.running { background: var(--good-bg); color: var(--good); }
+  .chip.coast, .chip.manual { background: var(--charge-bg); color: var(--charge); }
+  .chip.climate { background: var(--idle-bg); color: var(--muted); margin-left: 6px; font-weight: 600; }
+  .dtile textarea { width: 100%; font: 12px/1.4 var(--mono); padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--text); min-height: 44px; resize: vertical; }
+  .outrow { border: 1px dashed var(--line); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   .vars { display: flex; flex-wrap: wrap; gap: 6px; padding: 12px 14px; }
   .vars span { font-family: var(--mono); font-size: 12px; background: var(--idle-bg); padding: 3px 8px; border-radius: 6px; }
@@ -239,6 +257,10 @@
         <div class="sub" id="g-arrays"></div></div>
       <div class="panel"><h3>Loads <span class="when" id="g-when-d"></span></h3><div id="g-loads"></div></div>
     </div>
+    <div class="card" id="climate-card" hidden>
+      <h2>Climate <span class="muted" id="climate-note">Each zone's comfort band, what the ladder granted, and why.</span></h2>
+      <div class="zones" id="climate-zones"></div>
+    </div>
     <div class="card">
       <h2>Dispatch list
         <span class="muted">Walked top to bottom each tick: solar first, then battery down to each entry's floor.</span>
@@ -316,6 +338,18 @@
       </div>
       <ul class="problems" id="dproblems" hidden></ul>
     </div>
+    <div class="card">
+      <h2>Climate zones <span class="muted">Each zone's sensors and outputs. Turn the climate brain on, and set its defaults, under "Climate brain" above. With no outputs a zone is advisory: planned and shown, never switched.</span></h2>
+      <div class="tile-grid" id="zone-tiles"></div>
+      <div class="actions">
+        <button class="btn" id="btn-zone-add">Add zone</button>
+        <button class="btn primary" id="btn-zone-save">Save zones</button>
+        <span class="spacer"></span><span id="zstatus" class="muted"></span>
+      </div>
+      <ul class="problems" id="zproblems" hidden></ul>
+    </div>
+    <datalist id="dl-humidity"></datalist><datalist id="dl-presence"></datalist><datalist id="dl-contact"></datalist>
+    <datalist id="dl-climate"></datalist><datalist id="dl-hydronic"></datalist><datalist id="dl-weather"></datalist>
     <datalist id="dl-soc"></datalist><datalist id="dl-power"></datalist><datalist id="dl-temperature"></datalist>
     <datalist id="dl-energy"></datalist><datalist id="dl-irradiance"></datalist><datalist id="dl-switchable"></datalist><datalist id="dl-sensor"></datalist>
   </section>
@@ -372,10 +406,45 @@ function renderRow(t) {
       <div class="short" style="width:${(100 * Math.max(0, t.shortKw || 0)) / total}%"></div></div>` : "";
   const level = t.f != null && t.f < 1 && t.f > 0 ? ` <span class="muted">at ${Math.round(t.f * 100)}%</span>` : "";
   return `<div class="row"><div class="idx">${t.i}</div>
-    <div><div class="name">${esc(t.name || t.dev)}${level}${t.gen ? '<span class="chip gen">can\'t shed</span>' : ""}</div>
+    <div><div class="name">${esc(t.name || t.dev)}${level}${t.gen ? '<span class="chip gen">can\'t shed</span>' : ""}${t.climate ? `<span class="chip climate">${esc(t.climate.level)}${t.climate.setpoint != null ? ` · ${t.climate.side === "cool" ? "≤" : "≥"} ${fmt(t.climate.setpoint)} °C` : ""}</span>` : ""}</div>
       ${t.cond != null && t.cond !== "1" ? `<div class="cond">${esc(t.cond)}</div>` : ""}
       <div class="why">${esc(why(t))}</div>${bar}</div>
     <div>${t.outcome === "shed" && !t.important ? '<span class="chip held">held back</span>' : `<span class="chip ${t.outcome}">${OUTCOME[t.outcome] || t.outcome}</span>`}</div></div>`;
+}
+
+// ---------- climate zones ----------
+const STATE_TEXT = { running: "running", coast: "coasting", shed: "shed", idle: "off", manual: "your setting" };
+function renderClimate(c) {
+  const card = $("climate-card");
+  card.hidden = !(c && c.enabled && c.zones.length);
+  if (card.hidden) return;
+  const pct = (x) => (x == null || Number.isNaN(x) ? "—" : `${Math.round(x * 100)}%`);
+  $("climate-note").textContent = `Each zone's comfort band, what the ladder granted, and why. Outdoor forecast: ${c.forecast}${c.outlook.fullSoon ? " · surplus forecast" : ""}${c.outlook.tight ? " · tight ahead (low case)" : ""}.`;
+  $("climate-zones").innerHTML = c.zones.map((z) => {
+    const p = z.plan || {}, d = z.decision || {}, b = z.band, T = p.temp;
+    const lo = 10, hi = 32, x = (v) => `${Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100))}%`;
+    const bar = b && b.low != null && b.high != null ? `<div class="bandbar" title="band ${fmt(b.low)}–${fmt(b.high)} °C"><div class="b" style="left:${x(b.low)};right:calc(100% - ${x(b.high)})"></div>${T != null ? `<div class="now" style="left:${x(T)}"></div>` : ""}</div>` : "";
+    const occ = p.occupied ? "occupied" : p.away ? "away" : "empty";
+    const next = !p.occupied && p.nextOccMin > 0 ? ` · likely in ${p.nextOccMin} min` : "";
+    const outs = (z.outputs || []).map((o) => `${esc(o.entity)}${Number.isFinite(o.meteredKw) ? ` · ${watts(o.meteredKw)} metered` : ""}${o.advice ? ` · ${esc(o.advice)}` : ""}`).join("<br>");
+    return `<div class="zone">
+      <div class="top"><b>${esc(z.name)}</b><span class="spacer"></span><span class="chip ${esc(d.state || "idle")}">${esc(STATE_TEXT[d.state] || d.state || "—")}</span></div>
+      <div class="top"><span class="temp">${T == null || Number.isNaN(T) ? "—" : fmt(T)} °C</span>
+        <span class="muted">${d.mode === "heat" || d.mode === "cool" ? `${d.mode} to ${fmt(d.setpoint)} °C` : d.mode || ""}</span></div>
+      ${bar}
+      <div class="kv">
+        <span>Level</span><span>${esc(d.level || "none")}${b ? ` · band ${fmt(b.low)}–${fmt(b.high)} °C` : ""}${d.refused && d.refused.length ? ` · shed: ${esc(d.refused.join(", "))}` : ""}</span>
+        <span>Comfort</span><span>${p.comfort ? `${fmt(p.comfort.heat)}–${fmt(p.comfort.cool)} °C · learned ${pct(p.comfort.confidence)}${p.comfort.humid ? " · humid" : ""}` : "—"}</span>
+        <span>Occupancy</span><span>${occ} · ${pct(p.occProb)} usual now${next}${z.presence == null ? " · no presence reading" : ""}</span>
+        <span>Model</span><span>${z.model ? `τ ${fmt(z.model.tauH, 0)} h · ${pct(z.model.confidence)} confident` : "—"}${p.leadMin ? ` · warm-up lead ${p.leadMin} min` : ""}</span>
+        <span>Planned</span><span>${watts(d.kw || 0)}${p.cap ? ` of ${watts(Math.max(p.cap.heat || 0, p.cap.cool || 0))}` : ""}${p.cap && p.cap.advisory ? " (advisory zone)" : ""}</span>
+        ${outs ? `<span>Outputs</span><span>${outs}</span>` : ""}
+      </div>
+      <div class="why">${esc(d.reason || "")}</div>
+      ${z.window ? '<div class="flag">Window or door open.</div>' : ""}
+      ${(z.flags || []).map((f) => `<div class="flag">${esc(f.entity)}: ${esc(f.problem)}</div>`).join("")}
+    </div>`;
+  }).join("");
 }
 
 let showIdle = false, showServed = false;
@@ -403,6 +472,7 @@ function renderLive() {
   $("banners").innerHTML = banners.join("");
 
   renderGauges();
+  renderClimate(s.climate);
   // Entries that aren't asking to run, or that an earlier entry already served,
   // change nothing, so they're hidden unless asked for.
   const count = (o) => s.result.trace.filter((t) => t.outcome === o).length;
@@ -1177,6 +1247,22 @@ const FIELDS = [
   ["Irradiance (Ecowitt gateway)", "ecowitt.poll_seconds", "int", "Poll (s)"],
   ["Autonomy", "autonomy.seed_load_kwh", "num", "Seed daily load (kWh)", "Used until a week of real load history exists."],
   ["Autonomy", "autonomy.window_days", "int", "History window (days)"],
+  ["Climate brain", "climate.enabled", "bool", "Enabled", "Plan each zone below and offer its comfort levels to the dispatch list. Dry run applies here too."],
+  ["Climate brain", "climate.presence_entity", "entity", "House presence", "Optional: someone home (on/home). Off or not_home means away: the widest band, no pre-conditioning.", "presence"],
+  ["Climate brain", "climate.weather_entity", "entity", "Weather forecast", "A weather entity with an hourly (or daily) forecast, e.g. the Bureau of Meteorology's. For pre-cooling before a hot afternoon and the projection.", "weather"],
+  ["Climate brain", "climate.heat_c", "num", "Heat to (°C)", "Comfort setpoint when heating, until people's own adjustments are learned."],
+  ["Climate brain", "climate.cool_c", "num", "Cool to (°C)", "Comfort setpoint when cooling, until learned."],
+  ["Climate brain", "climate.setback_c", "num", "Setback (°C)", "How far the band widens when a zone is empty."],
+  ["Climate brain", "climate.away_c", "num", "Away setback (°C)", "How far it widens when the house is away."],
+  ["Climate brain", "climate.soak_c", "num", "Soak (°C)", "How far surplus solar may pre-heat or pre-cool past the comfort setpoint, toward the band's far edge."],
+  ["Climate brain", "climate.protect_min_c", "num", "Protect above (°C)", "The protection level holds rooms between these."],
+  ["Climate brain", "climate.protect_max_c", "num", "Protect below (°C)"],
+  ["Climate brain", "climate.precondition_max_min", "int", "Longest pre-conditioning (min)", "The most ahead of predicted occupancy a zone may start."],
+  ["Climate brain", "climate.occupancy_threshold", "num", "Occupancy threshold", "0–1: how likely occupancy must be to pre-condition, or to count as occupied without a presence reading."],
+  ["Climate brain", "climate.vacancy_delay_min", "int", "Vacancy delay (min)", "A zone stays occupied this long after its presence sensors clear."],
+  ["Climate brain", "climate.override_hold_min", "int", "Respect changes by hand (min)", "When someone changes what the brain set, leave it this long."],
+  ["Climate brain", "climate.window_delay_s", "int", "Window delay (s)", "A window or door open this long turns its zone off."],
+  ["Climate brain", "climate.learn_days", "int", "Learn from history (days)", "On first start, each zone learns from this much Home Assistant history."],
 ];
 
 const SWITCHABLE = ["switch", "input_boolean", "light", "fan", "climate", "water_heater", "humidifier"];
@@ -1188,6 +1274,12 @@ const KINDS = {
   irradiance: (e) => e.domain === "sensor" && (e.device_class === "irradiance" || /W\/m/.test(e.unit || "")),
   switchable: (e) => SWITCHABLE.includes(e.domain),
   sensor: (e) => e.domain === "sensor",
+  humidity: (e) => e.domain === "sensor" && (e.device_class === "humidity" || e.unit === "%"),
+  presence: (e) => ["binary_sensor", "person", "device_tracker", "input_boolean", "group", "zone"].includes(e.domain),
+  contact: (e) => e.domain === "binary_sensor",
+  climate: (e) => e.domain === "climate",
+  hydronic: (e) => ["climate", "switch", "valve", "input_boolean"].includes(e.domain),
+  weather: (e) => e.domain === "weather",
 };
 
 let settingsSaved = null, entities = [], devicesSaved = null;
@@ -1244,6 +1336,7 @@ function readSettings() {
   // The battery and inverters are saved by their own tiles.
   s.battery = settingsSaved.battery;
   s.solar = settingsSaved.solar;
+  s.climate.zones = settingsSaved.climate.zones;   // saved by their own tiles
   return s;
 }
 
@@ -1407,8 +1500,82 @@ function loadTiles() {
   invModel = ((settingsSaved.solar && settingsSaved.solar.inverters) || []).map((x) => ({ ...x }));
   renderBattery();
   renderInverters();
-  for (const el of ["bstatus", "istatus"]) $(el).textContent = "";
+  zoneModel = JSON.parse(JSON.stringify((settingsSaved.climate && settingsSaved.climate.zones) || []));
+  renderZones();
+  for (const el of ["bstatus", "istatus", "zstatus"]) $(el).textContent = "";
+  showList($("zproblems"), []);
   showList($("bproblems"), []); showList($("iproblems"), []);
+}
+
+// ---------- climate zone tiles ----------
+let zoneModel = [];
+const CLASSES = [["essential", "Essential (protected first)"], ["comfort", "Comfort"], ["luxury", "Luxury (surplus first)"]];
+const OUT_KINDS = [["ac", "A/C (climate entity)"], ["hydronic", "Hydronic (thermostat, valve or pump)"]];
+const MODES = [["heat,cool", "heat and cool"], ["heat", "heat only"], ["cool", "cool only"]];
+const linesHtml = (k, v) => `<textarea data-l="${k}" spellcheck="false" placeholder="one entity per line">${esc((v || []).join("\n"))}</textarea>`;
+const nowList = (ids) => (ids || []).map((id) => esc(entityNow(id))).join("<br>");
+
+function renderZones() {
+  const devs = ((devicesSaved && devicesSaved.devices) || []).map((d) => [d.id, `${d.name || d.id} (${d.id})`]);
+  $("zone-tiles").innerHTML = zoneModel.map((z, i) => {
+    const outs = (z.outputs || []).map((o, j) => `<div class="outrow" data-o="${j}">
+      <div class="row2">${field("Kind", `<select data-ok="kind">${opts(OUT_KINDS, o.kind)}</select>`)}${field("kW", `<input data-ok="kw" data-num="1" type="number" step="any" value="${o.kw == null ? "" : esc(o.kw)}">`, "Running draw; a meter refines it.")}</div>
+      ${field("Entity", `<input data-ok="entity" list="dl-${o.kind === "ac" ? "climate" : "hydronic"}" value="${esc(o.entity || "")}" spellcheck="false" placeholder="pick an entity">`, nowHint(o.entity))}
+      ${o.kind === "ac" ? field("Modes", `<select data-ok="modes">${opts(MODES, (o.modes || ["heat", "cool"]).join(","))}</select>`) : ""}
+      ${field("Power meter", `<input data-ok="power_entity" list="dl-power" value="${esc(o.power_entity || "")}" spellcheck="false" placeholder="optional, e.g. a Shelly Pro 3EM channel">`, "The truth for its draw. Several outputs may share one meter (attribution is then approximate). " + nowHint(o.power_entity))}
+      ${o.power_entity ? "" : field("Energy meter", `<input data-ok="energy_entity" list="dl-energy" value="${esc(o.energy_entity || "")}" spellcheck="false" placeholder="optional, if there's no power meter">`)}
+      <div class="row2">${field("Min run (s)", `<input data-ok="min_on_s" data-num="1" type="number" step="1" value="${o.min_on_s == null ? "" : esc(o.min_on_s)}">`)}${field("Min off (s)", `<input data-ok="min_off_s" data-num="1" type="number" step="1" value="${o.min_off_s == null ? "" : esc(o.min_off_s)}">`)}</div>
+      ${o.kind === "hydronic" ? `<div class="row2">${field("Heat source", `<input data-ok="source_entity" list="dl-hydronic" value="${esc(o.source_entity || "")}" spellcheck="false" placeholder="boiler / heat pump (optional)">`)}${field("Source meter", `<input data-ok="source_power_entity" list="dl-power" value="${esc(o.source_power_entity || "")}" spellcheck="false" placeholder="optional">`)}</div>` : ""}
+      <button class="btn" data-odel="${j}">Remove output</button></div>`).join("");
+    return `<div class="dtile" data-z="${i}">
+      <div class="head">${inputHtml("name", z.name, 'placeholder="Name"')}<button class="btn" data-zdel="${i}">Remove</button></div>
+      <div class="row2">${field("Area", inputHtml("area", z.area, 'placeholder="Home Assistant area"'))}${field("Floor area (m²)", numHtml("area_m2", z.area_m2, "20"), "Seeds the thermal model.")}</div>
+      <div class="row2">${field("Energy class", `<select data-k="energy_class">${opts(CLASSES, z.energy_class || "comfort")}</select>`)}${field("Priority", numHtml("priority", z.priority, "5"), "Lower first, within a class.")}</div>
+      ${field("Temperature sensors", linesHtml("temp_entities", z.temp_entities), "Averaged. " + nowList(z.temp_entities))}
+      ${field("Humidity", entHtml("humidity_entity", z.humidity_entity, "humidity"), nowHint(z.humidity_entity))}
+      ${field("Presence", linesHtml("presence_entities", z.presence_entities), "Any on = occupied (e.g. wasp-in-a-box occupancy sensors, motion). Unavailable counts as unknown. " + nowList(z.presence_entities))}
+      ${field("Windows and doors", linesHtml("contact_entities", z.contact_entities), nowList(z.contact_entities))}
+      <div class="row2">${field("Heat to (°C)", numHtml("heat_c", z.heat_c, "learned"))}${field("Cool to (°C)", numHtml("cool_c", z.cool_c, "learned"))}</div>
+      <div class="row2">${field("Setback (°C)", numHtml("setback_c", z.setback_c, "default"))}${field("Takes over load", `<select data-k="device"><option value="">none</option>${opts(devs, z.device || "")}</select>`, "Its sp rules in the list then drive this zone.")}</div>
+      ${(z.outputs || []).length ? "" : field("Advisory kW", numHtml("advisory_kw", z.advisory_kw, "1.5"), "Modelled draw while the zone has no outputs.")}
+      <label>Outputs</label>${outs || '<div class="hint">None: advisory only.</div>'}
+      <button class="btn" data-oadd="${i}">Add output</button>
+      <div class="now">${z._new ? "new" : `id ${esc(z.id)}`}</div>
+    </div>`;
+  }).join("") + `<div class="dtile add" id="zone-add-tile">+ Add zone</div>`;
+  for (const el of document.querySelectorAll("#zone-tiles .dtile[data-z]")) {
+    const z = zoneModel[Number(el.dataset.z)];
+    bindTile(el, z, renderZones);
+    for (const ta of el.querySelectorAll("[data-l]")) ta.addEventListener("input", () => { z[ta.dataset.l] = ta.value.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean); });
+    for (const row of el.querySelectorAll("[data-o]")) {
+      const o = z.outputs[Number(row.dataset.o)];
+      for (const inp of row.querySelectorAll("[data-ok]")) {
+        inp.addEventListener(inp.tagName === "SELECT" ? "change" : "input", () => {
+          const k = inp.dataset.ok, v = inp.value.trim();
+          o[k] = k === "modes" ? v.split(",") : inp.dataset.num ? (v === "" ? null : Number(v)) : v;
+          if (inp.tagName === "SELECT" || k === "power_entity") renderZones();
+        });
+      }
+    }
+  }
+  for (const b of document.querySelectorAll("[data-zdel]")) b.onclick = () => { zoneModel.splice(Number(b.dataset.zdel), 1); renderZones(); };
+  for (const b of document.querySelectorAll("[data-oadd]")) b.onclick = () => { const z = zoneModel[Number(b.dataset.oadd)]; z.outputs = [...(z.outputs || []), { kind: "ac", entity: "", kw: 1.5, modes: ["heat", "cool"] }]; renderZones(); };
+  for (const b of document.querySelectorAll("[data-odel]")) b.onclick = () => { const z = zoneModel[Number(b.closest("[data-z]").dataset.z)]; z.outputs.splice(Number(b.dataset.odel), 1); renderZones(); };
+  $("zone-add-tile").onclick = addZone;
+}
+
+function addZone() {
+  zoneModel.push({ name: "", area: "", area_m2: 20, energy_class: "comfort", priority: 5, temp_entities: [], humidity_entity: "",
+    presence_entities: [], contact_entities: [], heat_c: null, cool_c: null, setback_c: null, device: "", advisory_kw: 1.5, outputs: [], _new: true });
+  renderZones();
+}
+
+async function saveZones() {
+  const zones = zoneModel.map((z) => { const { _new, ...rest } = z; return { ...rest, id: z.id || idSlug(z.name) }; });
+  if (await putSettings({ ...settingsSaved, climate: { ...settingsSaved.climate, zones } }, $("zstatus"), $("zproblems"), "Saved and applied.")) {
+    zoneModel = JSON.parse(JSON.stringify(zones));
+    renderZones();
+  }
 }
 
 function showList(el, list) { el.innerHTML = list.map((p) => `<li>${esc(p)}</li>`).join(""); el.hidden = !list.length; }
@@ -1428,6 +1595,7 @@ async function loadSettingsTab() {
   const pol = await fetch("api/policy", { cache: "no-store" }).then((r) => r.json());
   devicesSaved = pol.policy;
   renderDevices(devicesSaved.devices);
+  renderZones();   // its "takes over load" choices come from the policy's devices
 }
 
 async function saveSettings() {
@@ -1501,6 +1669,8 @@ $("btn-dev-save").onclick = saveDevices;
 $("btn-inv-add").onclick = addInverter;
 $("btn-inv-save").onclick = saveInverters;
 $("btn-batt-save").onclick = saveBattery;
+$("btn-zone-add").onclick = addZone;
+$("btn-zone-save").onclick = saveZones;
 
 // ---------- tabs ----------
 for (const b of document.querySelectorAll("nav button")) {

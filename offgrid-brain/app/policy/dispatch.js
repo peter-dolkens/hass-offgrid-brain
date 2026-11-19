@@ -11,6 +11,12 @@
      { type:"load", dev, cond, sp, gen } -> run `dev` if `cond` (expr -> 0..1)
                                  is met, at that service level.
 
+   Two optional load-entry fields let the climate brain (climate/ladder.js) put
+   zones in the list, as the simulator does for its zones: `kw` replaces the
+   device's nameplate for that entry (the modelled power for that comfort level),
+   and `vars` overrides context variables for that entry (the zone's own occ and
+   gap). Entries without them behave exactly as before.
+
    Not every shed matters. A device is `important` unless it says otherwise
    (devices[].important: false), and an entry can override its device either way
    (list[].important). A device that ends up not running is FLAGGED only if one of
@@ -120,13 +126,14 @@ function decide(policy, ctx, limits, running, history) {
     const d = dev[e.dev];
     if (!d) { trace.push({ i, type: "load", dev: e.dev, outcome: "unknown-device" }); continue; }
 
-    const f = clamp01(C.fn(e.cond, d.name || e.dev)({ ...ctx, surplus: budgetKw, used: ctx.used || 0 }));
+    const f = clamp01(C.fn(e.cond, d.name || e.dev)({ ...ctx, ...(e.vars || {}), surplus: budgetKw, used: ctx.used || 0 }));
     const important = e.important != null ? !!e.important : d.important !== false;
     const row = { i, type: "load", dev: e.dev, name: d.name || e.dev, cond: e.cond, f,
                   gen: !!e.gen, important, floorPct, surplusKw: budgetKw };
+    if (e.climate) row.climate = e.climate;
     if (f <= 1e-9) { trace.push({ ...row, outcome: "idle" }); continue; }   // rule says not now — not a shed
 
-    const demand = (d.kw || 0) * f;
+    const demand = (Number.isFinite(e.kw) ? e.kw : d.kw || 0) * f;
     const inc = demand - (served[e.dev] || 0);        // top-up to this service level
     if (inc <= 1e-9) { trace.push({ ...row, demandKw: demand, outcome: "already-served" }); continue; }
 
@@ -174,6 +181,7 @@ function decide(policy, ctx, limits, running, history) {
       entry: i,
       sp: e.sp,
       gen: !!e.gen,
+      ...(d.climate ? { climate: d.climate } : {}),
       reason: ok
         ? `entry ${i}: granted ${(fromPv + fromBatt).toFixed(3)} kW (${fromPv.toFixed(3)} solar + ${fromBatt.toFixed(3)} battery)`
         : unbacked

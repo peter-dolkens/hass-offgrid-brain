@@ -12,6 +12,7 @@
 const fs = require("fs");
 const path = require("path");
 const log = require("./log.js");
+const ClimateZones = require("./climate/zones.js");
 
 const SETTINGS_PATH = process.env.SETTINGS_PATH || "/config/settings.json";
 
@@ -53,6 +54,8 @@ const DEFAULTS = Object.freeze({
   // One entry per AC-coupled solar inverter, each read through its own
   // integration (see INVERTER_SOURCES). kwp null = what the source reports.
   solar: { inverters: [] },
+  // The climate brain (climate/): zones, comfort defaults and learning. See climate/zones.js.
+  climate: ClimateZones.DEFAULTS,
 });
 
 const SECTIONS = ["battery", "autonomy", "sources", "storm", "splink", "ecowitt", "solar"];
@@ -135,6 +138,7 @@ function normalise(from) {
   delete out.splink.access_client_secret;
   out.solar.inverters = upgradeInverters(out.solar, from.fronius);
   upgradeBattery(out, from);
+  out.climate = ClimateZones.normalise(from.climate);
   return out;
 }
 
@@ -198,6 +202,7 @@ function check(s) {
   urls("ecowitt", ec.urls);
   if (ec.enabled && !(ec.urls || []).length) p.push("ecowitt is enabled but has no URLs");
   if (!num(ec.poll_seconds, 5, 300)) p.push("ecowitt poll must be 5-300 s");
+  if (s.climate) p.push(...ClimateZones.check(s.climate));
   const inv = (s.solar || {}).inverters;
   if (!Array.isArray(inv)) p.push("solar inverters must be a list");
   else {
