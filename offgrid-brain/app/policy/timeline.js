@@ -106,9 +106,13 @@ class Recorder {
 function loadProfile(samples, fallbackKw, { lessClimate = false } = {}) {
   const sum = new Array(24).fill(0), n = new Array(24).fill(0);
   let all = 0, alln = 0;
+  const withClim = lessClimate && samples.some((s) => Number.isFinite(s.climKw));
   for (const s of samples) {
     if (!Number.isFinite(s.loadKw)) continue;
-    // With the climate brain projecting its own load, the recorded climate draw is taken out.
+    // With the climate brain projecting its own load, the recorded climate draw is
+    // taken out. Samples recorded before it was (no climKw) might hold climate load
+    // too, so they're left out while any sample has the figure.
+    if (lessClimate && withClim && !Number.isFinite(s.climKw)) continue;
     const kw = lessClimate && Number.isFinite(s.climKw) ? Math.max(0, s.loadKw - s.climKw) : s.loadKw;
     const h = new Date(s.t).getHours();
     sum[h] += kw; n[h]++; all += kw; alln++;
@@ -150,7 +154,7 @@ function forecastAt(hourly) {
  *   load         (t) => kW
  *   autonomy     { expectedLoadKwh, forecastKwh } for each step's autonomy
  *   overheadKw   the inverter's own draw, on top of the load (learnOverhead)
- *   expand       optional (t, ctx) => policy for that step: the climate brain's zones
+ *   expand       optional (t, ctx, now) => policy for that step: the climate brain's zones
  *                with their projected comfort levels. The kW the walk grants to climate
  *                devices is added to the step's load (`load` should exclude it).
  */
@@ -174,8 +178,8 @@ function project({ now, soc, ctx, policy, limits, battery, forecast, load, auton
       autonomy: autonomyOf({ socPct: s, capacityKwh: cap, reservePct: reserve, ...autonomy }),
     };
     if (k > 0) hist.push([t, s]);
-    const r = decide(expand ? expand(t, c) : policy, c, limits, wasRunning, hist);
-    wasRunning = new Set(r.decisions.filter((x) => x.run).map((x) => x.id));
+    const r = decide(expand ? expand(t, c, now) : policy, c, limits, wasRunning, hist);
+    wasRunning = new Set([...r.decisions.filter((x) => x.run).map((x) => x.id), ...(r.grantedKeys || [])]);
     const climateKw = r.decisions.reduce((s2, x) => s2 + (x.climate && x.run ? x.kw : 0), 0);
     loadKw += climateKw;
     const chargeRoom = s < 99.5 ? battery.max_charge_kw : 0;

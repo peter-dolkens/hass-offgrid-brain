@@ -11,11 +11,16 @@
      { type:"load", dev, cond, sp, gen } -> run `dev` if `cond` (expr -> 0..1)
                                  is met, at that service level.
 
-   Two optional load-entry fields let the climate brain (climate/ladder.js) put
-   zones in the list, as the simulator does for its zones: `kw` replaces the
-   device's nameplate for that entry (the modelled power for that comfort level),
-   and `vars` overrides context variables for that entry (the zone's own occ and
-   gap). Entries without them behave exactly as before.
+   Optional load-entry fields, used by the climate brain (climate/ladder.js) and
+   honoured identically by the simulator. Entries without them behave as before:
+     kw     replaces the device's nameplate for this entry (a comfort level's
+            modelled power);
+     vars   overrides context variables for this entry (a zone's own occ and gap);
+     floor  the battery % this entry needs, on top of the charge rung above it
+            (effective floor = max(rung floor, floor)), so an entry's depth needn't
+            come from its position in the list;
+     hkey   the key hysteresis remembers this entry by (default: its device), so a
+            device running at a shallow level doesn't hold a deeper one on.
 
    Not every shed matters. A device is `important` unless it says otherwise
    (devices[].important: false), and an entry can override its device either way
@@ -94,6 +99,7 @@ function decide(policy, ctx, limits, running, history) {
   let deficitKw = 0;      // gen-backed demand that solar+battery could not cover
   // One row per list entry, for display only: what the walk did at each depth.
   const trace = [];
+  const grantedKeys = [];  // hysteresis keys of entries granted (see hkey)
 
   for (let i = 0; i < policy.list.length; i++) {
     const e = policy.list[i];
@@ -128,14 +134,18 @@ function decide(policy, ctx, limits, running, history) {
 
     const f = clamp01(C.fn(e.cond, d.name || e.dev)({ ...ctx, ...(e.vars || {}), surplus: budgetKw, used: ctx.used || 0 }));
     const important = e.important != null ? !!e.important : d.important !== false;
+    // An entry may ask for a higher floor than the rung above it (never a lower one).
+    const entFloor = Number.isFinite(e.floor) ? Math.max(floorPct, e.floor) : floorPct;
+    const entMet = entFloor === floorPct && floorMet;
+    const runKey = e.hkey || e.dev;
     const row = { i, type: "load", dev: e.dev, name: d.name || e.dev, cond: e.cond, f,
-                  gen: !!e.gen, important, floorPct, surplusKw: budgetKw };
+                  gen: !!e.gen, important, floorPct: entFloor, surplusKw: budgetKw };
     if (e.climate) row.climate = e.climate;
     if (f <= 1e-9) { trace.push({ ...row, outcome: "idle" }); continue; }   // rule says not now — not a shed
 
     const demand = (Number.isFinite(e.kw) ? e.kw : d.kw || 0) * f;
     const inc = demand - (served[e.dev] || 0);        // top-up to this service level
-    if (inc <= 1e-9) { trace.push({ ...row, demandKw: demand, outcome: "already-served" }); continue; }
+    if (inc <= 1e-9) { if (e.hkey) grantedKeys.push(e.hkey); trace.push({ ...row, demandKw: demand, outcome: "already-served" }); continue; }
 
     const fromPv = Math.min(inc, budgetKw);
     budgetKw -= fromPv;
@@ -144,9 +154,9 @@ function decide(policy, ctx, limits, running, history) {
     let fromBatt = 0;
     // Battery only above this entry's floor, or, for a device already running, above
     // the floor less the hysteresis band (but never the reserve).
-    const holdFloor = wasRunning.has(e.dev) ? Math.max(limits.reserve_pct, floorPct - hyst) : floorPct;
-    const held = holdFloor < floorPct && soc <= floorPct && soc > holdFloor && !floorMet;
-    if (rem > 1e-9 && (soc > holdFloor || (floorMet && soc > limits.reserve_pct))) {
+    const holdFloor = wasRunning.has(runKey) ? Math.max(limits.reserve_pct, entFloor - hyst) : entFloor;
+    const held = holdFloor < entFloor && soc <= entFloor && soc > holdFloor && !entMet;
+    if (rem > 1e-9 && (soc > holdFloor || (entMet && soc > limits.reserve_pct))) {
       fromBatt = Math.min(rem, battKw);
       battKw -= fromBatt;
       rem -= fromBatt;
@@ -163,6 +173,7 @@ function decide(policy, ctx, limits, running, history) {
        relay to open. */
     const unbacked = !ok && !!e.gen;
     if (ok || unbacked) served[e.dev] = (served[e.dev] || 0) + inc;
+    if ((ok || unbacked) && e.hkey) grantedKeys.push(e.hkey);
     if (unbacked) deficitKw += rem;
 
     const prev = result[e.dev];
@@ -188,7 +199,7 @@ function decide(policy, ctx, limits, running, history) {
           ? `entry ${i}: DEFICIT — needs ${rem.toFixed(3)} kW that solar and battery cannot supply at ${soc.toFixed(1)}%, but it is gen-backed so it keeps running`
           : (prev && prev.run)
             ? `entry ${i}: deeper service level not reached (short ${rem.toFixed(3)} kW) — running at a lower level`
-            : `entry ${i}: SHED — short ${rem.toFixed(3)} kW; battery at ${soc.toFixed(1)}% is at/below this entry's floor of ${floorPct}%`,
+            : `entry ${i}: SHED — short ${rem.toFixed(3)} kW; battery at ${soc.toFixed(1)}% is at/below this entry's floor of ${entFloor}%`,
     };
   }
 
@@ -202,6 +213,7 @@ function decide(policy, ctx, limits, running, history) {
     heldBack: decisions.filter((r) => !r.run && !r.missedImportant),
     unbacked: decisions.filter((r) => r.unbacked),   // running, but on borrowed time
     deficitKw,
+    grantedKeys,
     budget: budgetKw,
     floorPct,
     errors: C.errors,

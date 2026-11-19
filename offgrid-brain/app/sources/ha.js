@@ -22,6 +22,10 @@ class HAClient {
     this.ready = false;
     this.onReady = () => {};
     this.backoff = 1000;
+    // Who the brain is to Home Assistant, and the contexts of its own service calls,
+    // so a state change it caused isn't mistaken for a person's (climate learning).
+    this.userId = null;
+    this.ourContexts = new Set();
   }
 
   /** Mirror these entities. New ones are fetched now if the socket is up, so a
@@ -54,7 +58,12 @@ class HAClient {
     // state's friendly_name for entities outside the registry.
     const composed = (r, st) => {
       const ent = r.name || r.original_name || "", dev = r.device_id ? deviceName.get(r.device_id) || "" : "";
-      const n = [dev, ent].filter(Boolean).join(" ");
+      // has_entity_name: the entity's name is only its own part (none = the device's
+      // main entity). Otherwise the entity's name is already the whole name.
+      let n = ent;
+      if (r.has_entity_name || r.name == null && r.original_name == null) {
+        n = !ent ? dev : !dev || ent.toLowerCase().startsWith(dev.toLowerCase()) ? ent : `${dev} ${ent}`;
+      }
       return n || (st.attributes && st.attributes.friendly_name) || st.entity_id;
     };
     return states.map((st) => {
@@ -91,6 +100,12 @@ class HAClient {
         const { entity_id, new_state } = msg.event.data;
         if (this.watch.has(entity_id) && new_state) this._store(entity_id, new_state);
       }
+      // A sensor re-reporting the same value: only its last_reported moves.
+      if (msg.type === "event" && msg.event && msg.event.event_type === "state_reported") {
+        const d = msg.event.data || {}, cur = this.states.get(d.entity_id);
+        if (cur && d.new_state) this._store(d.entity_id, d.new_state);
+        else if (cur && d.last_reported) cur.reported = Date.parse(d.last_reported) || cur.reported;
+      }
     });
 
     ws.addEventListener("close", () => {
@@ -104,12 +119,21 @@ class HAClient {
   }
 
   _store(entityId, st) {
-    this.states.set(entityId, { state: st.state, attributes: st.attributes || {}, updated: Date.now() });
+    const ms = (x) => { const v = Date.parse(x); return Number.isFinite(v) ? v : NaN; };
+    this.states.set(entityId, {
+      state: st.state, attributes: st.attributes || {}, updated: Date.now(),
+      // Home Assistant's own times: when the value last changed, and when the device
+      // last reported it (even unchanged). Freshness is judged from these.
+      changed: ms(st.last_changed), reported: ms(st.last_reported || st.last_updated),
+      context: st.context || null,
+    });
   }
 
   async _afterAuth() {
     try {
       await this.send({ type: "subscribe_events", event_type: "state_changed" });
+      this.send({ type: "subscribe_events", event_type: "state_reported" }).catch(() => {});
+      this.send({ type: "auth/current_user" }).then((u) => { this.userId = (u && u.id) || null; }).catch(() => {});
       const all = await this.send({ type: "get_states" });
       for (const st of all) if (this.watch.has(st.entity_id)) this._store(st.entity_id, st);
       this.ready = true;
@@ -129,10 +153,14 @@ class HAClient {
     });
   }
 
-  /** An entity's mirrored state: { state, attributes, ageSec }, or null if not mirrored. */
+  /** An entity's mirrored state: { state, attributes, ageSec, context, changedMs },
+      or null if not mirrored. Age is from when Home Assistant last heard from the
+      device (last_reported), not from when the brain received it. */
   entity(entityId) {
     const s = entityId && this.states.get(entityId);
-    return s ? { state: s.state, attributes: s.attributes, ageSec: (Date.now() - s.updated) / 1000 } : null;
+    if (!s) return null;
+    const heard = Number.isFinite(s.reported) ? s.reported : s.updated;
+    return { state: s.state, attributes: s.attributes, ageSec: Math.max(0, (Date.now() - heard) / 1000), context: s.context, changedMs: s.changed };
   }
 
   /** Numeric value of an entity, with age in seconds. NaN when absent/unavailable. */
@@ -157,8 +185,14 @@ class HAClient {
     return f == null ? { value: NaN, ageSec: Infinity } : { value: r.value * f, ageSec: r.ageSec };
   }
 
-  callService(domain, service, entityId, data = {}) {
-    return this.send({ type: "call_service", domain, service, target: { entity_id: entityId }, service_data: data });
+  async callService(domain, service, entityId, data = {}) {
+    const res = await this.send({ type: "call_service", domain, service, target: { entity_id: entityId }, service_data: data });
+    const id = res && res.context && res.context.id;
+    if (id) {
+      this.ourContexts.add(id);
+      if (this.ourContexts.size > 500) this.ourContexts.delete(this.ourContexts.values().next().value);
+    }
+    return res;
   }
 }
 

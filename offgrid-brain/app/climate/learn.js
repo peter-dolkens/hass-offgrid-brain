@@ -17,11 +17,41 @@
 const HOUR = 3600 * 1000, DAY = 24 * HOUR;
 const dayType = (t) => { const d = new Date(t).getDay(); return d === 0 || d === 6 ? 1 : 0; };
 const dowMon0 = (t) => (new Date(t).getDay() + 6) % 7;
+const fin = (x) => typeof x === "number" && Number.isFinite(x);
+const obj = (x) => x && typeof x === "object" && !Array.isArray(x);
+
+/** Keep only well-formed learned state (a hand-edited or truncated file must not
+    crash the brain or poison its learning). */
+function cleanPrefs(state) {
+  const out = {};
+  if (!obj(state)) return out;
+  for (const [zone, z] of Object.entries(state)) {
+    if (!obj(z)) continue;
+    for (const [k, bins] of Object.entries(z)) {
+      if (!/^[01](heat|cool)$/.test(k) || !Array.isArray(bins) || bins.length !== 24) continue;
+      const ok = bins.map((b) => (b && fin(b.w) && b.w >= 0 && fin(b.x) && fin(b.xx) && fin(b.t) ? b : null));
+      (out[zone] = out[zone] || {})[k] = ok;
+    }
+  }
+  return out;
+}
+function cleanOcc(state) {
+  const out = {};
+  if (!obj(state)) return out;
+  const bin = (b) => (b && fin(b.w) && b.w >= 0 && fin(b.s) && fin(b.t) ? b : null);
+  for (const [zone, z] of Object.entries(state)) {
+    if (!obj(z) || !Array.isArray(z.week) || z.week.length !== 168 || !Array.isArray(z.day) || z.day.length !== 48) continue;
+    out[zone] = { week: z.week.map(bin), day: z.day.map(bin),
+      cur: z.cur && fin(z.cur.h) && fin(z.cur.on) && fin(z.cur.n) ? z.cur : null };
+  }
+  return out;
+}
+
 const decayTo = (b, t, halfLifeMs) => (b && t > b.t ? Math.pow(0.5, (t - b.t) / halfLifeMs) : 1);
 
 class Preferences {
   constructor(state, { halfLifeDays = 21, sigmaH = 1.5, crossDayType = 0.25 } = {}) {
-    this.z = state && typeof state === "object" ? state : {};
+    this.z = cleanPrefs(state);
     this.hl = halfLifeDays * DAY;
     this.sigma = sigmaH;
     this.cross = crossDayType;
@@ -67,7 +97,7 @@ class Preferences {
 
 class Occupancy {
   constructor(state, { halfLifeDays = 28 } = {}) {
-    this.z = state && typeof state === "object" ? state : {};
+    this.z = cleanOcc(state);
     this.hl = halfLifeDays * DAY;
   }
   toJSON() { return this.z; }

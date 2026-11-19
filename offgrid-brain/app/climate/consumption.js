@@ -12,14 +12,26 @@
 "use strict";
 
 const DAY = 24 * 3600 * 1000;
+const fin = (x) => typeof x === "number" && Number.isFinite(x);
 
 class ConsumptionCurves {
   constructor(state, { halfLifeDays = 30, runKw = 0.08 } = {}) {
-    this.c = state && typeof state === "object" ? state : {};
+    this.c = {};
+    if (state && typeof state === "object") {
+      for (const [k, b] of Object.entries(state)) {
+        if (b && ["w", "x", "y", "xx", "xy", "t"].every((p) => fin(b[p])) && b.w >= 0) this.c[k] = b;
+      }
+    }
     this.hl = halfLifeDays * DAY;
     this.runKw = runKw;
   }
   toJSON() { return this.c; }
+
+  /** Forget curves for outputs no longer configured. */
+  retain(entities) {
+    const keep = new Set(entities);
+    for (const k of Object.keys(this.c)) if (!keep.has(k.split("|")[0])) delete this.c[k];
+  }
 
   /** A metered sample: output entity, side, lift °C, measured kW, at time t. */
   observe(entity, side, lift, kw, t) {
@@ -49,12 +61,19 @@ class ConsumptionCurves {
   }
 }
 
-/** Shared meters: one power entity on several outputs. The measured kW is split
-    over the outputs on that meter that say they're running (by nameplate share),
-    or over all of them by nameplate when none says. Approximate by nature.
-    `outs`: [{ key, power_entity, kw, running }]; `read(entity)` -> kW or NaN.
+/** Meters to outputs. One power entity may serve several outputs (a shared circuit).
+    `outs`: [{ key, power_entity, kw, running, climateOnly }]; `read(entity)` -> kW or NaN;
+    `baselines`: { meter: kW } carried between calls (updated here).
+
+    - Something says it's running: the meter's reading, less the circuit's learned
+      baseline (other loads, standby), is split over the running outputs by kW.
+    - Nothing says it's running: the outputs get 0 and the reading teaches the
+      baseline; unless the meter is climate-only (nothing else on the circuit), in
+      which case a real draw means some unit is running unannounced, and it's split
+      over all of them by kW.
+    Attribution on a shared meter is approximate by nature.
     Returns Map key -> kW (NaN where there is no meter or no reading). */
-function attribute(outs, read) {
+function attribute(outs, read, baselines = {}) {
   const res = new Map();
   const groups = new Map();
   for (const o of outs) {
@@ -62,12 +81,26 @@ function attribute(outs, read) {
     if (!groups.has(o.power_entity)) groups.set(o.power_entity, []);
     groups.get(o.power_entity).push(o);
   }
+  const share = (g, total) => {
+    const sum = g.reduce((t, o) => t + (o.kw > 0 ? o.kw : 1), 0);
+    return (o) => (total * (o.kw > 0 ? o.kw : 1)) / sum;
+  };
   for (const [ent, g] of groups) {
     const total = read(ent);
     if (!Number.isFinite(total)) { for (const o of g) res.set(o.key, NaN); continue; }
-    const share = g.some((o) => o.running) ? g.filter((o) => o.running) : g;
-    const sum = share.reduce((t, o) => t + (o.kw > 0 ? o.kw : 1), 0);
-    for (const o of g) res.set(o.key, share.includes(o) ? (total * (o.kw > 0 ? o.kw : 1)) / sum : 0);
+    const climateOnly = g.some((o) => o.climateOnly);
+    const running = g.filter((o) => o.running);
+    if (running.length) {
+      const base = climateOnly ? 0 : baselines[ent] || 0;
+      const of = share(running, Math.max(0, total - base));
+      for (const o of g) res.set(o.key, running.includes(o) ? of(o) : 0);
+    } else if (climateOnly && total > 0.08) {
+      const of = share(g, total);
+      for (const o of g) res.set(o.key, of(o));
+    } else {
+      for (const o of g) res.set(o.key, 0);
+      if (!climateOnly) baselines[ent] = Number.isFinite(baselines[ent]) ? 0.95 * baselines[ent] + 0.05 * total : total;
+    }
   }
   return res;
 }

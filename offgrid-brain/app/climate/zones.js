@@ -12,7 +12,7 @@
 
    Settings live in settings.json under `climate`; see DEFAULTS. */
 "use strict";
-const { ENERGY_CLASSES } = require("./levels.js");
+const { ENERGY_CLASSES, DEFAULTS: LEVEL_DEFAULTS } = require("./levels.js");
 
 const DEFAULTS = Object.freeze({
   enabled: false,
@@ -20,11 +20,10 @@ const DEFAULTS = Object.freeze({
   weather_entity: "",       // weather.* with an hourly (or daily) forecast
   learn_days: 14,           // HA history replayed into the learners on first start
   heat_c: 20, cool_c: 25,   // comfort setpoints until preferences are learned
-  setback_c: 3,             // band widening when unoccupied
-  away_c: 6,                // ... when the house is away
-  soak_c: 3,                // how far toward the band's far edge surplus may pre-heat/cool
-  protect_min_c: 10, protect_max_c: 32,
+  ...LEVEL_DEFAULTS,        // setback_c, away_c, soak_c, protect_min_c, protect_max_c
+  soak_enabled: false,      // surplus into thermal mass: off until validated on real hardware
   precondition_max_min: 120,
+  precondition_grace_min: 90,
   occupancy_threshold: 0.5,
   override_hold_min: 120,
   window_delay_s: 60,
@@ -40,6 +39,7 @@ const ZONE_DEFAULTS = Object.freeze({
   priority: 5, energy_class: "comfort",
   device: "",               // a policy device this zone takes over (legacy sp rules)
   advisory_kw: 1.5,         // modelled rating while the zone has no outputs
+  advise_only: false,       // plan and advise, never command (whatever dry_run says)
   auto_ladder: true,
   outputs: [],
 });
@@ -53,12 +53,12 @@ const list = (v) => (Array.isArray(v) ? v : typeof v === "string" && v ? v.split
 function normaliseOutput(o) {
   const kind = OUTPUT_KINDS.includes(o && o.kind) ? o.kind : "ac";
   const isPump = kind === "hydronic";
+  const modes = list(o && o.modes).filter((m) => m === "heat" || m === "cool");
   return {
     kind,
     entity: (o && o.entity) || "",
     kw: o && Number.isFinite(o.kw) ? o.kw : 1.5,
-    modes: kind === "hydronic" ? ["heat"] : list(o && o.modes).filter((m) => m === "heat" || m === "cool").length
-      ? list(o.modes).filter((m) => m === "heat" || m === "cool") : ["heat", "cool"],
+    modes: kind === "hydronic" ? ["heat"] : modes.length ? modes : ["heat", "cool"],
     min_on_s: o && Number.isFinite(o.min_on_s) ? o.min_on_s : isPump ? 180 : 300,
     min_off_s: o && Number.isFinite(o.min_off_s) ? o.min_off_s : isPump ? 180 : 300,
     // Measured electrical draw (a circuit meter such as a Shelly Pro 3EM): W or kW.
@@ -66,6 +66,8 @@ function normaliseOutput(o) {
     // approximate (consumption.attribute). An energy counter stands in for power.
     power_entity: (o && o.power_entity) || "",
     energy_entity: (o && o.energy_entity) || "",
+    // The meter's circuit carries only climate units (no other loads).
+    meter_climate_only: !!(o && o.meter_climate_only),
     source_entity: (o && o.source_entity) || "",
     source_power_entity: (o && o.source_power_entity) || "",
   };
@@ -76,6 +78,7 @@ function normaliseZone(z) {
   for (const k of ["temp_entities", "presence_entities", "contact_entities"]) out[k] = list(out[k]);
   out.outputs = (Array.isArray(out.outputs) ? out.outputs : []).map(normaliseOutput);
   if (!ENERGY_CLASSES.includes(out.energy_class)) out.energy_class = "comfort";
+  out.advise_only = !!out.advise_only;
   return out;
 }
 
@@ -85,11 +88,32 @@ function normalise(from) {
   return out;
 }
 
+/** Problems normalising would hide (it coerces unknown kinds and classes):
+    checked on the settings as submitted. */
+function checkRaw(c) {
+  const p = [];
+  if (!c || typeof c !== "object" || !Array.isArray(c.zones)) return p;
+  for (const [i, z] of c.zones.entries()) {
+    const label = (z && z.name) || `zone ${i + 1}`;
+    if (!z || typeof z !== "object") continue;
+    if (z.energy_class != null && !ENERGY_CLASSES.includes(z.energy_class)) p.push(`${label}: energy class must be one of ${ENERGY_CLASSES.join(", ")}`);
+    if (z.outputs != null && !Array.isArray(z.outputs)) p.push(`${label}: outputs must be a list`);
+    for (const [j, o] of (Array.isArray(z.outputs) ? z.outputs : []).entries()) {
+      if (!o || typeof o !== "object") { p.push(`${label} output ${j + 1} is malformed`); continue; }
+      if (o.kind != null && !OUTPUT_KINDS.includes(o.kind)) p.push(`${label} output ${j + 1}: kind must be ${OUTPUT_KINDS.join(" or ")}`);
+      if (o.modes != null && list(o.modes).some((m) => m !== "heat" && m !== "cool")) p.push(`${label} output ${j + 1}: modes may only be heat and cool`);
+      if (o.kw != null && !num(o.kw, 0, 100)) p.push(`${label} output ${j + 1}: kW must be 0-100`);
+    }
+  }
+  return p;
+}
+
 /** Problems that make the climate settings unusable; empty = OK. */
 function check(c) {
   const p = [];
   if (!c || typeof c !== "object") return ["climate settings must be an object"];
   if (typeof c.enabled !== "boolean") p.push("climate: enabled must be true or false");
+  if (typeof c.soak_enabled !== "boolean") p.push("climate: soak must be on or off");
   for (const k of ["presence_entity", "weather_entity"]) if (c[k] && !ENTITY_RE.test(c[k])) p.push(`climate: "${c[k]}" isn't an entity id`);
   if (c.weather_entity && !c.weather_entity.startsWith("weather.")) p.push("climate: the weather entity must be a weather.* entity");
   if (!num(c.heat_c, 5, 30)) p.push("climate: heat setpoint must be 5-30 °C");
@@ -99,6 +123,7 @@ function check(c) {
   if (!num(c.protect_min_c, 0, 25) || !num(c.protect_max_c, 20, 45) || !(c.protect_max_c > c.protect_min_c)) p.push("climate: protection limits must be 0-25 and 20-45 °C, min below max");
   if (!num(c.learn_days, 0, 60)) p.push("climate: learn days must be 0-60");
   if (!num(c.precondition_max_min, 0, 720)) p.push("climate: pre-conditioning lead must be 0-720 min");
+  if (!num(c.precondition_grace_min, 0, 240)) p.push("climate: pre-conditioning grace must be 0-240 min");
   if (!num(c.occupancy_threshold, 0.05, 0.95)) p.push("climate: occupancy threshold must be 0.05-0.95");
   if (!num(c.override_hold_min, 0, 1440)) p.push("climate: override hold must be 0-1440 min");
   if (!num(c.window_delay_s, 0, 3600)) p.push("climate: window delay must be 0-3600 s");
@@ -155,6 +180,7 @@ function zoneEntities(z) {
 
 const UNKNOWN = new Set(["unavailable", "unknown", "", null, undefined]);
 const PRESENT = new Set(["on", "home", "occupied", "detected", "true"]);
+const SENSOR_STALE_SEC = 3 * 3600;
 
 /** One presence input: true / false, or null when unknown (unavailable is NOT empty). */
 function presenceOf(st) {
@@ -179,48 +205,73 @@ function powerKwOf(st) {
   return parseFloat(st.state) * (unit === "kw" ? 1 : unit === "mw" ? 1000 : 0.001);
 }
 
-/** Does the output's own entity say it is heating/cooling right now? */
-function claimsRunning(st) {
-  if (!st || UNKNOWN.has(st.state)) return false;
+/** What a unit is doing, by its own account: "heat", "cool" or null. With no
+    hvac_action it's inferred from its mode and the room (its own current_temperature,
+    else the zone's) against its setpoint, so a unit idling at setpoint isn't "running".
+    Dry and fan-only are neither: they don't heat, and aren't the brain's to plan. */
+function runningSide(st, roomT = NaN) {
+  if (!st || UNKNOWN.has(st.state)) return null;
   const a = st.attributes || {};
-  if (a.hvac_action) return ["heating", "preheating", "cooling"].includes(a.hvac_action);
-  return st.state === "on" || st.state === "open" || st.state === "heat" || st.state === "cool";
+  if (a.hvac_action) return a.hvac_action === "heating" || a.hvac_action === "preheating" ? "heat" : a.hvac_action === "cooling" ? "cool" : null;
+  const T = Number.isFinite(a.current_temperature) ? a.current_temperature : roomT;
+  const sp = a.temperature;
+  if (st.state === "heat") return Number.isFinite(T) && Number.isFinite(sp) ? (T < sp ? "heat" : null) : "heat";
+  if (st.state === "cool") return Number.isFinite(T) && Number.isFinite(sp) ? (T > sp ? "cool" : null) : "cool";
+  if (st.state === "heat_cool" || st.state === "auto") {
+    if (Number.isFinite(T) && Number.isFinite(a.target_temp_low) && T < a.target_temp_low) return "heat";
+    if (Number.isFinite(T) && Number.isFinite(a.target_temp_high) && T > a.target_temp_high) return "cool";
+    return null;
+  }
+  if (st.state === "on" || st.state === "open") return "heat";   // a valve or pump
+  return null;
 }
+const claimsRunning = (st, roomT) => runningSide(st, roomT) != null;
 
 /** An output's state as the brain sees it. `meteredKw` is its measured draw (NaN:
     no meter), already attributed when the meter is shared. Running power is the
-    meter's when there is one, else the configured kW while the unit says it runs. */
-function readOutput(o, get, meteredKw = NaN) {
+    meter's when there is one, else the configured kW while the unit runs. */
+function readOutput(o, get, meteredKw = NaN, roomT = NaN) {
   const st = get(o.entity), dom = o.entity.split(".")[0];
   const metered = Number.isFinite(meteredKw);
-  if (!st || UNKNOWN.has(st.state)) return { entity: o.entity, available: false, on: false, mode: null, setpoint: NaN, action: null, heatKw: metered ? meteredKw : 0, coolKw: 0, meteredKw };
+  if (!st || UNKNOWN.has(st.state)) {
+    return { entity: o.entity, available: false, on: false, mode: null, setpoint: NaN, action: null, running: false,
+             heatKw: 0, coolKw: 0, meteredKw, context: st ? st.context : null };
+  }
   const a = st.attributes || {};
+  const side = runningSide(st, roomT);
   if (dom === "climate") {
     const mode = st.state;   // off / heat / cool / heat_cool / auto / dry / fan_only
-    const action = a.hvac_action || null;
-    const setpoint = Number.isFinite(a.temperature) ? a.temperature : NaN;
-    const low = Number.isFinite(a.target_temp_low) ? a.target_temp_low : NaN;
-    const high = Number.isFinite(a.target_temp_high) ? a.target_temp_high : NaN;
-    const cooling = action ? action === "cooling" : mode === "cool";
-    const running = claimsRunning(st);
-    const kw = metered ? meteredKw : running ? o.kw : 0;
-    return { entity: o.entity, available: true, on: mode !== "off", mode, setpoint, low, high, action, running,
-             heatKw: cooling ? 0 : kw, coolKw: cooling ? kw : 0, meteredKw };
+    const kw = metered ? meteredKw : side ? o.kw : 0;
+    // A metered unit drawing power in dry mode is cooling (dehumidifying); fan-only isn't either.
+    const cooling = side === "cool" || (mode === "dry" && metered && meteredKw > 0.08);
+    return { entity: o.entity, available: true, on: mode !== "off", mode,
+             setpoint: Number.isFinite(a.temperature) ? a.temperature : NaN,
+             low: Number.isFinite(a.target_temp_low) ? a.target_temp_low : NaN,
+             high: Number.isFinite(a.target_temp_high) ? a.target_temp_high : NaN,
+             step: Number.isFinite(a.target_temp_step) && a.target_temp_step > 0 ? a.target_temp_step : 0.5,
+             minTemp: Number.isFinite(a.min_temp) ? a.min_temp : 7, maxTemp: Number.isFinite(a.max_temp) ? a.max_temp : 35,
+             action: a.hvac_action || null, running: !!side,
+             heatKw: side === "heat" ? kw : 0, coolKw: cooling ? (metered ? meteredKw : kw) : 0,
+             meteredKw, context: st.context || null, changedMs: st.changedMs };
   }
   const on = st.state === "on" || st.state === "open";
   const kw = metered ? meteredKw : on ? o.kw : 0;
   return { entity: o.entity, available: true, on, running: on, mode: on ? "heat" : "off", setpoint: NaN, action: null,
-           heatKw: kw, coolKw: 0, meteredKw };
+           heatKw: kw, coolKw: 0, meteredKw, context: st.context || null, changedMs: st.changedMs };
 }
 
-/** A zone's readings at a moment. `get(entity)` -> { state, attributes, ageSec } | null. */
+/** A zone's readings at a moment. `get(entity)` -> { state, attributes, ageSec } | null.
+    A temperature sensor counts while available and reported within 3 h (Home
+    Assistant's last_reported, not when the brain heard of it). */
 function readZone(z, get, meteredKw = () => NaN) {
-  const temps = z.temp_entities.map(get).filter((s) => s && !UNKNOWN.has(s.state) && s.ageSec < 3 * 3600)
-    .map((s) => parseFloat(s.state)).filter((v) => Number.isFinite(v) && v > -40 && v < 70);
+  const fresh = z.temp_entities.map((id) => [id, get(id)])
+    .filter(([, s]) => s && !UNKNOWN.has(s.state) && !(s.ageSec > SENSOR_STALE_SEC))
+    .map(([id, s]) => [id, parseFloat(s.state)]).filter(([, v]) => Number.isFinite(v) && v > -40 && v < 70);
+  const temp = fresh.length ? fresh.reduce((a, [, v]) => a + v, 0) / fresh.length : NaN;
   const hum = z.humidity_entity ? get(z.humidity_entity) : null;
-  const outputs = z.outputs.map((o, i) => readOutput(o, get, meteredKw(`${z.id}#${i}`)));
+  const outputs = z.outputs.map((o, i) => readOutput(o, get, meteredKw(`${z.id}#${i}`), temp));
   return {
-    temp: temps.length ? temps.reduce((a, b) => a + b, 0) / temps.length : NaN,
+    temp, tempIds: fresh.map(([id]) => id).join(","),
     humidity: hum && !UNKNOWN.has(hum.state) ? parseFloat(hum.state) : NaN,
     presence: z.presence_entities.length ? anyPresent(z.presence_entities.map(get)) : null,
     windowOpen: z.contact_entities.some((e) => { const s = get(e); return s && (s.state === "on" || s.state === "open"); }),
@@ -240,5 +291,8 @@ function capability(z, rating = (o) => o.kw) {
   return { heat: sum("heat"), cool: sum("cool"), advisory: false };
 }
 
-module.exports = { DEFAULTS, ZONE_DEFAULTS, OUTPUT_KINDS, normalise, normaliseZone, check, zoneEntities,
-                   readZone, readOutput, presenceOf, anyPresent, capability, powerKwOf, claimsRunning, UNKNOWN };
+/** A zone with no outputs: planned and shown, but it has nothing real to power. */
+const isAdvisory = (z) => !z.outputs.length;
+
+module.exports = { DEFAULTS, ZONE_DEFAULTS, OUTPUT_KINDS, normalise, normaliseZone, check, checkRaw, zoneEntities,
+                   readZone, readOutput, presenceOf, anyPresent, capability, isAdvisory, powerKwOf, claimsRunning, runningSide, UNKNOWN };

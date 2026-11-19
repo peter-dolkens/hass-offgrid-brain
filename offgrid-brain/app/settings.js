@@ -145,6 +145,12 @@ function normalise(from) {
 const ENTITY_RE = /^[a-z_]+\.[a-z0-9_]+$/;
 const num = (v, lo, hi) => typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
 
+/** Problems in settings as submitted that normalise() would coerce away
+    (an unknown output kind or energy class). */
+function checkRaw(s) {
+  return s && typeof s === "object" ? ClimateZones.checkRaw(s.climate) : [];
+}
+
 /** Problems that make settings unusable; empty = OK. */
 function check(s) {
   if (!s || typeof s !== "object") return ["settings must be a JSON object"];
@@ -241,7 +247,11 @@ function loadSettings(options) {
     // An older shape was upgraded in memory: write it back once, so the file
     // matches what runs (the original is kept as .bak).
     if (JSON.stringify(s) !== JSON.stringify(raw)) {
-      try { save(s); log.info(`upgraded ${SETTINGS_PATH} to the current format (previous kept as settings.json.bak)`); }
+      // Keep the file as it was before this version's upgrade for good: the .bak is
+      // overwritten by the next save from the panel.
+      const pre = `${SETTINGS_PATH}.pre-${require("./package.json").version}`;
+      try { if (!fs.existsSync(pre)) fs.writeFileSync(pre, JSON.stringify(raw, null, 2) + "\n"); } catch { /* best effort */ }
+      try { save(s); log.info(`upgraded ${SETTINGS_PATH} to the current format (previous kept as ${path.basename(pre)})`); }
       catch (w) { log.warn(`could not rewrite ${SETTINGS_PATH}: ${w.message}`); }
     }
     log.info(`settings loaded from ${SETTINGS_PATH}`);
@@ -282,4 +292,4 @@ function migrateSolar(s, discovered) {
   return next;
 }
 
-module.exports = { DEFAULTS, INVERTER_SOURCES, BATTERY_SOURCES, normalise, check, loadSettings, save, migrateSolar, SETTINGS_PATH };
+module.exports = { DEFAULTS, INVERTER_SOURCES, BATTERY_SOURCES, normalise, check, checkRaw, loadSettings, save, migrateSolar, SETTINGS_PATH };

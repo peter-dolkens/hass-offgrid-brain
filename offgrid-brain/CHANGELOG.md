@@ -5,39 +5,62 @@
   list as comfort levels (protect, setback, comfort, precondition, soak) with
   modelled power, instead of fixed "setpoint + N °C" rules. The battery decides how
   much comfort it can afford: shedding climate widens a zone's band by degrees, and a
-  room on the right side of its band coasts with the unit off, before anything is
-  shed outright. Zones are set up in Settings → Climate zones: temperature sensors,
-  humidity, any number of presence sensors (OR'ed; unavailable counts as unknown),
-  window/door contacts, and A/C or hydronic outputs (thermostat, valve or pump, with
-  a shared heat source), each with minimum run/off times. Off by default; dry run
-  only advises.
+  room on the right side of its band coasts with the unit off. Protection is never
+  shed (a deficit, like a gen-backed load, and kept in safe mode). Zones are set up in
+  Settings → Climate zones: temperature sensors, humidity, any number of presence
+  sensors (OR'ed; unavailable counts as unknown), window/door contacts, and A/C or
+  hydronic outputs (thermostat, valve or pump, with a shared heat source). Off by
+  default; dry run (or a zone's "advice only") only advises.
+- **Ladder.** A new `{"type":"climate","zone","level","cond","floor"}` entry. Load
+  entries may carry their own battery `floor` (on top of the rung above them), so a
+  zone with no entries is placed just after the first charge rung with floors by
+  energy class (essential, comfort, luxury) and priority, and works on the starter
+  policy's 20/100 rungs; soak goes last on 100%. Old `sp` rules keep working on a
+  load a zone takes over, with modelled kW and the zone's own `occ` and `gap`. Each
+  level has its own hysteresis. Live warns about a level placed under the 100% rung.
 - **Learning.** Setpoints people choose, by zone, weekday/weekend, hour and heat/cool,
-  with decay and confidence; changes to what the brain set are overrides, learned
-  strongly and respected for a while. Occupancy by hour of the week, for
-  pre-conditioning. A first-order thermal model per zone, fit online, for warm-up
-  leads, coasting and power. Seeded from Home Assistant history on first start;
-  kept in `/data/climate.json`.
+  with decay and confidence. Only people teach: the brain's own commands (remembered
+  across restarts, matched within the unit's setpoint step), its own HA user, and
+  automations are told apart by Home Assistant's state context. A person's change to
+  what the brain set is respected for a while, as long as comfort is affordable.
+  Occupancy by hour of the week, for pre-conditioning (which holds once started, with
+  a grace past the expected arrival). A thermal model per zone with solar gain and
+  hydronic lag, fit online, gating itself by confidence. Seeded from HA history on
+  first start, a day and an entity at a time. Kept in `/data/climate.json`
+  (versioned; an unreadable file is set aside as `.corrupt`).
 - **Metered power.** Each output can name its circuit meter (power or energy, e.g. a
-  Shelly Pro 3EM channel), shared meters split approximately. Measured draw is the
-  truth for the thermal model, learns each unit's consumption curve (kW against
-  lift), sets the zone's planned power, and flags a unit that should run but draws
-  ~0 W.
-- **Solar as thermal storage.** With surplus forecast on the low case, zones pre-cool
-  before a hot afternoon or pre-heat before a cold night, into the band's far edge.
-  When the low case is tight, setbacks widen and long pre-conditioning is skipped.
-- **Ladder.** New `{"type":"climate","zone","level","cond"}` entries; zones without
-  entries are placed by energy class (essential, comfort, luxury) and priority. Old
-  `sp` rules keep working on a load a zone takes over, with modelled kW and the
-  zone's own `occ` and `gap`. Load entries may carry `kw` and `vars` (inert
-  otherwise). The projection includes climate's planned load.
-- **Panel and MQTT.** A Climate card on Live (band, level, occupancy, confidence,
-  reason, meter readings, advice); climate levels tagged in the dispatch list. Each
-  zone is a child MQTT device of the brain with Target, Mode, Comfort level, Reason,
-  band, occupancy, planned power and confidence entities.
-- Entity pickers compose names from the device and entity registries (Home Assistant
-  2026.11 naming) instead of the deprecated `friendly_name`.
-- **Simulator.** `climate` entries are understood by offgrid-sim too, mapped onto its
-  zone model; the engine-sync test checks the level names agree.
+  Shelly Pro 3EM channel). Measured draw is the truth for the thermal model, learns
+  each unit's consumption curve (kW against lift), sets the zone's planned power,
+  and flags a unit that should run but draws ~0 W. Shared meters are split over the
+  running units after a learned baseline (approximate); "only climate on this
+  circuit" attributes unannounced draw.
+- **Control.** Reconciles with each unit every tick and resends, with a backoff, what
+  it doesn't follow. Setpoints on the unit's step and inside its range; minimum run
+  and off times from when the unit was seen to change, kept across restarts; heat ↔
+  cool through off. Losing the room temperature hands the unit's own thermostat the
+  setback instead of switching it off. Zones with no outputs are advisory: a shadow
+  walk shows what they'd get without taking real budget. A failing climate tick hands
+  its zones' loads back to the policy as written, and never stops load shedding.
+- **Solar as thermal storage (soak).** With surplus forecast on the low case, zones
+  can pre-cool before a hot afternoon or pre-heat before a cold night, never against
+  what the room needs now. Off by default until validated on real hardware.
+- **Projection** includes climate's planned load (with the cost of recovering a room
+  from its setback), takes recorded climate draw out of the load profile, and leaves
+  advisory zones out.
+- **Panel and MQTT.** A Climate card on Live; climate levels tagged in the dispatch
+  list. Each zone is a child MQTT device of the brain, named for the zone and in its
+  area, with Target, Mode, Comfort level, band, occupancy, planned power and
+  diagnostic Reason, confidence and Unit problem entities; removed zones are cleaned
+  up across restarts.
+- Entity pickers compose names from the device and entity registries, respecting
+  `has_entity_name` (Home Assistant 2026.11 naming) instead of the deprecated
+  `friendly_name`. Entity freshness uses Home Assistant's `last_reported`.
+- Settings are checked as submitted as well as normalised, and the file as it was
+  before an upgrade is kept as `settings.json.pre-<version>`.
+- **Simulator.** `climate` entries, and the `kw`, `vars` and `floor` entry fields, are
+  understood by offgrid-sim too. The level table is now owned by the simulator
+  (`climate-levels.js`) and vendored like `expr.js`; the engine-sync test checks the
+  copy and that the simulator honours the entry fields.
 
 ## 0.33.0
 - **Storm signal.** Three new policy variables: `storm` (a BoM thunderstorm,

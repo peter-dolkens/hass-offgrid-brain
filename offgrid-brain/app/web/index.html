@@ -154,6 +154,7 @@
   .bandbar .now { position: absolute; top: -3px; width: 2px; height: 14px; background: var(--text); }
   .chip.running { background: var(--good-bg); color: var(--good); }
   .chip.coast, .chip.manual { background: var(--charge-bg); color: var(--charge); }
+  .chip.fallback { background: var(--warn-bg); color: var(--warn); }
   .chip.climate { background: var(--idle-bg); color: var(--muted); margin-left: 6px; font-weight: 600; }
   .dtile textarea { width: 100%; font: 12px/1.4 var(--mono); padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--text); min-height: 44px; resize: vertical; }
   .outrow { border: 1px dashed var(--line); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
@@ -413,14 +414,15 @@ function renderRow(t) {
 }
 
 // ---------- climate zones ----------
-const STATE_TEXT = { running: "running", coast: "coasting", shed: "shed", idle: "off", manual: "your setting" };
+const STATE_TEXT = { running: "running", coast: "coasting", shed: "shed", idle: "off", manual: "your setting", fallback: "unit's thermostat" };
 function renderClimate(c) {
   const card = $("climate-card");
   card.hidden = !(c && c.enabled && c.zones.length);
   if (card.hidden) return;
   const pct = (x) => (x == null || Number.isNaN(x) ? "—" : `${Math.round(x * 100)}%`);
   $("climate-note").textContent = `Each zone's comfort band, what the ladder granted, and why. Outdoor forecast: ${c.forecast}${c.outlook.fullSoon ? " · surplus forecast" : ""}${c.outlook.tight ? " · tight ahead (low case)" : ""}.`;
-  $("climate-zones").innerHTML = c.zones.map((z) => {
+  const warn = [...(c.failed ? ["The climate brain failed this tick: its zones' loads are back with the policy as written."] : []), ...(c.warnings || [])];
+  $("climate-zones").innerHTML = warn.map((w) => `<div class="banner warn" style="grid-column:1/-1;margin:0">${esc(w)}</div>`).join("") + c.zones.map((z) => {
     const p = z.plan || {}, d = z.decision || {}, b = z.band, T = p.temp;
     const lo = 10, hi = 32, x = (v) => `${Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100))}%`;
     const bar = b && b.low != null && b.high != null ? `<div class="bandbar" title="band ${fmt(b.low)}–${fmt(b.high)} °C"><div class="b" style="left:${x(b.low)};right:calc(100% - ${x(b.high)})"></div>${T != null ? `<div class="now" style="left:${x(T)}"></div>` : ""}</div>` : "";
@@ -436,8 +438,8 @@ function renderClimate(c) {
         <span>Level</span><span>${esc(d.level || "none")}${b ? ` · band ${fmt(b.low)}–${fmt(b.high)} °C` : ""}${d.refused && d.refused.length ? ` · shed: ${esc(d.refused.join(", "))}` : ""}</span>
         <span>Comfort</span><span>${p.comfort ? `${fmt(p.comfort.heat)}–${fmt(p.comfort.cool)} °C · learned ${pct(p.comfort.confidence)}${p.comfort.humid ? " · humid" : ""}` : "—"}</span>
         <span>Occupancy</span><span>${occ} · ${pct(p.occProb)} usual now${next}${z.presence == null ? " · no presence reading" : ""}</span>
-        <span>Model</span><span>${z.model ? `τ ${fmt(z.model.tauH, 0)} h · ${pct(z.model.confidence)} confident` : "—"}${p.leadMin ? ` · warm-up lead ${p.leadMin} min` : ""}</span>
-        <span>Planned</span><span>${watts(d.kw || 0)}${p.cap ? ` of ${watts(Math.max(p.cap.heat || 0, p.cap.cool || 0))}` : ""}${p.cap && p.cap.advisory ? " (advisory zone)" : ""}</span>
+        <span>Model</span><span>${z.model ? `τ ${fmt(z.model.tauH, 0)} h · ${pct(z.model.confidence)} confident · planning with the ${esc(z.model.planningWith)}` : "—"}${p.leadMin ? ` · warm-up lead ${p.leadMin} min` : ""}</span>
+        <span>Planned</span><span>${z.advisory ? `${watts(d.shadowKw || 0)} if it had outputs (advisory: no real budget)` : watts(d.kw || 0)}${p.cap ? ` of ${watts(Math.max(p.cap.heat || 0, p.cap.cool || 0))}` : ""}${z.adviseOnly ? " · advice only" : ""}</span>
         ${outs ? `<span>Outputs</span><span>${outs}</span>` : ""}
       </div>
       <div class="why">${esc(d.reason || "")}</div>
@@ -1254,10 +1256,12 @@ const FIELDS = [
   ["Climate brain", "climate.cool_c", "num", "Cool to (°C)", "Comfort setpoint when cooling, until learned."],
   ["Climate brain", "climate.setback_c", "num", "Setback (°C)", "How far the band widens when a zone is empty."],
   ["Climate brain", "climate.away_c", "num", "Away setback (°C)", "How far it widens when the house is away."],
+  ["Climate brain", "climate.soak_enabled", "bool", "Soak surplus into rooms", "Pre-heat or pre-cool on surplus solar (thermal storage). Off until it has been watched on real hardware."],
   ["Climate brain", "climate.soak_c", "num", "Soak (°C)", "How far surplus solar may pre-heat or pre-cool past the comfort setpoint, toward the band's far edge."],
   ["Climate brain", "climate.protect_min_c", "num", "Protect above (°C)", "The protection level holds rooms between these."],
   ["Climate brain", "climate.protect_max_c", "num", "Protect below (°C)"],
   ["Climate brain", "climate.precondition_max_min", "int", "Longest pre-conditioning (min)", "The most ahead of predicted occupancy a zone may start."],
+  ["Climate brain", "climate.precondition_grace_min", "int", "Pre-conditioning grace (min)", "Once started, how long it waits past the expected arrival before giving up."],
   ["Climate brain", "climate.occupancy_threshold", "num", "Occupancy threshold", "0–1: how likely occupancy must be to pre-condition, or to count as occupied without a presence reading."],
   ["Climate brain", "climate.vacancy_delay_min", "int", "Vacancy delay (min)", "A zone stays occupied this long after its presence sensors clear."],
   ["Climate brain", "climate.override_hold_min", "int", "Respect changes by hand (min)", "When someone changes what the brain set, leave it this long."],
@@ -1523,6 +1527,7 @@ function renderZones() {
       ${field("Entity", `<input data-ok="entity" list="dl-${o.kind === "ac" ? "climate" : "hydronic"}" value="${esc(o.entity || "")}" spellcheck="false" placeholder="pick an entity">`, nowHint(o.entity))}
       ${o.kind === "ac" ? field("Modes", `<select data-ok="modes">${opts(MODES, (o.modes || ["heat", "cool"]).join(","))}</select>`) : ""}
       ${field("Power meter", `<input data-ok="power_entity" list="dl-power" value="${esc(o.power_entity || "")}" spellcheck="false" placeholder="optional, e.g. a Shelly Pro 3EM channel">`, "The truth for its draw. Several outputs may share one meter (attribution is then approximate). " + nowHint(o.power_entity))}
+      ${o.power_entity ? `<div class="toggle"><input type="checkbox" data-okb="meter_climate_only" ${o.meter_climate_only ? "checked" : ""}><span>Only climate on this circuit (any draw is a unit running)</span></div>` : ""}
       ${o.power_entity ? "" : field("Energy meter", `<input data-ok="energy_entity" list="dl-energy" value="${esc(o.energy_entity || "")}" spellcheck="false" placeholder="optional, if there's no power meter">`)}
       <div class="row2">${field("Min run (s)", `<input data-ok="min_on_s" data-num="1" type="number" step="1" value="${o.min_on_s == null ? "" : esc(o.min_on_s)}">`)}${field("Min off (s)", `<input data-ok="min_off_s" data-num="1" type="number" step="1" value="${o.min_off_s == null ? "" : esc(o.min_off_s)}">`)}</div>
       ${o.kind === "hydronic" ? `<div class="row2">${field("Heat source", `<input data-ok="source_entity" list="dl-hydronic" value="${esc(o.source_entity || "")}" spellcheck="false" placeholder="boiler / heat pump (optional)">`)}${field("Source meter", `<input data-ok="source_power_entity" list="dl-power" value="${esc(o.source_power_entity || "")}" spellcheck="false" placeholder="optional">`)}</div>` : ""}
@@ -1537,7 +1542,7 @@ function renderZones() {
       ${field("Windows and doors", linesHtml("contact_entities", z.contact_entities), nowList(z.contact_entities))}
       <div class="row2">${field("Heat to (°C)", numHtml("heat_c", z.heat_c, "learned"))}${field("Cool to (°C)", numHtml("cool_c", z.cool_c, "learned"))}</div>
       <div class="row2">${field("Setback (°C)", numHtml("setback_c", z.setback_c, "default"))}${field("Takes over load", `<select data-k="device"><option value="">none</option>${opts(devs, z.device || "")}</select>`, "Its sp rules in the list then drive this zone.")}</div>
-      ${(z.outputs || []).length ? "" : field("Advisory kW", numHtml("advisory_kw", z.advisory_kw, "1.5"), "Modelled draw while the zone has no outputs.")}
+      ${(z.outputs || []).length ? `<div class="toggle"><input type="checkbox" data-zb="advise_only" ${z.advise_only ? "checked" : ""}><span>Advice only: plan and show, never command</span></div>` : field("Advisory kW", numHtml("advisory_kw", z.advisory_kw, "1.5"), "Modelled draw while the zone has no outputs.")}
       <label>Outputs</label>${outs || '<div class="hint">None: advisory only.</div>'}
       <button class="btn" data-oadd="${i}">Add output</button>
       <div class="now">${z._new ? "new" : `id ${esc(z.id)}`}</div>
@@ -1546,6 +1551,8 @@ function renderZones() {
   for (const el of document.querySelectorAll("#zone-tiles .dtile[data-z]")) {
     const z = zoneModel[Number(el.dataset.z)];
     bindTile(el, z, renderZones);
+    for (const cb of el.querySelectorAll("[data-zb]")) cb.addEventListener("change", () => { z[cb.dataset.zb] = cb.checked; });
+    for (const cb of el.querySelectorAll("[data-okb]")) cb.addEventListener("change", () => { z.outputs[Number(cb.closest("[data-o]").dataset.o)][cb.dataset.okb] = cb.checked; });
     for (const ta of el.querySelectorAll("[data-l]")) ta.addEventListener("input", () => { z[ta.dataset.l] = ta.value.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean); });
     for (const row of el.querySelectorAll("[data-o]")) {
       const o = z.outputs[Number(row.dataset.o)];

@@ -2,46 +2,78 @@
    entities, on/off for valves and pumps, and a shared heat source that runs while
    any of its zones calls.
 
+   It reconciles with reality every tick: what each unit is actually doing (its
+   reading) against what the brain wants. Anything that differs is sent again, with
+   a backoff (1 min doubling to 30 min) so a unit that ignores or rejects commands
+   isn't hammered.
+
    Guards, as in sinks/actuator.js:
-     - dry run: decide and advise, call nothing;
-     - minimum run and off times per output (compressors and pumps must not
-       short-cycle); a heat <-> cool change counts as stopping;
-     - a zone being held at a person's setting (mode "manual") is not commanded.
-   Every command the brain sends is remembered (`commanded`) so a later change on
-   the unit that the brain didn't make can be recognised as a person's. */
+     - dry run (or a zone's advise_only): decide and advise, call nothing, change nothing;
+     - minimum run and off times per output, timed from when the unit was SEEN to
+       change (persisted, so a restart doesn't forget a dwell; a unit seen for the
+       first time is assumed to owe one); heat <-> cool goes through off;
+     - setpoints rounded to the unit's own step and clamped to its range;
+     - a zone held at a person's setting (mode "manual") is not commanded, but its
+       running valves still keep a shared heat source on.
+   Every command is remembered (`commanded`, persisted) so a later change on the
+   unit that the brain didn't make can be recognised as a person's. */
 "use strict";
 const log = require("../log.js");
 
-const half = (x) => Math.round(x * 2) / 2;
+const BACKOFF_MS = [60e3, 120e3, 300e3, 600e3, 1800e3];
+
+/** A setpoint the unit will accept: its step, inside its range. */
+function fitSetpoint(sp, reading) {
+  if (!Number.isFinite(sp)) return sp;
+  const step = reading && reading.step > 0 ? reading.step : 0.5;
+  const lo = reading && Number.isFinite(reading.minTemp) ? reading.minTemp : -Infinity;
+  const hi = reading && Number.isFinite(reading.maxTemp) ? reading.maxTemp : Infinity;
+  const v = Math.round(sp / step) * step;
+  return Math.round(Math.min(hi, Math.max(lo, v)) * 100) / 100;
+}
 
 class ClimateActuator {
-  constructor({ ha }) {
+  constructor({ ha, state = {} } = {}) {
     this.ha = ha;
-    this.st = new Map();          // key -> { on, mode, setpoint, changedAt }
-    this.commanded = new Map();   // entity -> { mode, setpoint, at }
+    this.obs = new Map();         // output key -> { on, mode, changedAt } as SEEN on the unit
+    this.commanded = new Map();   // entity -> { mode, setpoint, at, step }
+    this.resend = new Map();      // entity -> { tries, next }
     this.advice = new Map();      // entity -> last advisory line
-  }
-
-  _state(key, reading, now) {
-    if (!this.st.has(key)) {
-      // First sight: start from what the unit is doing, with no dwell owed.
-      this.st.set(key, { on: !!(reading && reading.on), mode: reading && reading.on ? reading.mode : "off",
-                         setpoint: reading ? reading.setpoint : NaN, changedAt: now - 1e9 });
+    for (const [k, v] of Object.entries((state && state.obs) || {})) {
+      if (v && typeof v.on === "boolean" && Number.isFinite(v.changedAt)) this.obs.set(k, { on: v.on, mode: v.mode || "off", changedAt: v.changedAt });
     }
-    return this.st.get(key);
+    for (const [k, v] of Object.entries((state && state.commanded) || {})) {
+      if (v && typeof v.mode === "string" && Number.isFinite(v.at)) this.commanded.set(k, v);
+    }
   }
 
-  /** Apply minimum run/off times. Returns the wanted state, or the held one. */
+  toJSON() { return { obs: Object.fromEntries(this.obs), commanded: Object.fromEntries(this.commanded) }; }
+
+  /** Forget outputs no longer configured. */
+  retain(keys, entities) {
+    for (const k of this.obs.keys()) if (!keys.has(k)) this.obs.delete(k);
+    for (const k of this.commanded.keys()) if (!entities.has(k)) this.commanded.delete(k);
+  }
+
+  /** Track what the unit is seen doing; its last change time drives the dwell. */
+  _observe(key, actual, now) {
+    const s = this.obs.get(key);
+    if (!s) { const n = { ...actual, changedAt: now }; this.obs.set(key, n); return n; }   // first sight: a dwell is owed
+    if (s.on !== actual.on || (actual.on && s.mode !== actual.mode)) { s.on = actual.on; s.mode = actual.mode; s.changedAt = now; }
+    return s;
+  }
+
+  /** Minimum run/off times. Returns the state to aim for and why it was held, if it was. */
   _dwell(s, want, o, now) {
-    const changing = want.on !== s.on || (want.on && s.on && want.mode !== s.mode);
-    if (!changing) return { want, held: null };
     const since = (now - s.changedAt) / 1000;
-    if (s.on && since < o.min_on_s) return { want: { on: true, mode: s.mode, setpoint: s.setpoint }, held: `minimum run (${Math.ceil(o.min_on_s - since)} s left)` };
-    if (!s.on && want.on && since < o.min_off_s) return { want: { on: false, mode: "off", setpoint: s.setpoint }, held: `minimum off (${Math.ceil(o.min_off_s - since)} s left)` };
-    return { want, held: null };
+    // heat <-> cool goes through off.
+    if (s.on && want.on && want.mode !== s.mode) want = { on: false, mode: "off", setpoint: want.setpoint, via: true };
+    if (s.on && !want.on && since < o.min_on_s) return { want: { on: true, mode: s.mode, setpoint: want.setpoint }, held: `minimum run (${Math.ceil(o.min_on_s - since)} s left)` };
+    if (!s.on && want.on && since < o.min_off_s) return { want: { on: false, mode: "off", setpoint: want.setpoint }, held: `minimum off (${Math.ceil(o.min_off_s - since)} s left)` };
+    return { want, held: want.via ? "changing between heat and cool: off first" : null };
   }
 
-  async _send(entity, want, { dryRun, now, zone, why }, out) {
+  async _send(entity, want, reading, { dryRun, now, zone, why }, out) {
     const dom = entity.split(".")[0];
     const desc = dom === "climate" ? (want.on ? `${want.mode}${Number.isFinite(want.setpoint) ? ` ${want.setpoint} °C` : ""}` : "off") : want.on ? "on" : "off";
     if (dryRun) {
@@ -49,8 +81,12 @@ class ClimateActuator {
       if (this.advice.get(entity) !== line) log.info(`DRY RUN climate ${zone}: would set ${entity} ${desc} — ${why}`);
       this.advice.set(entity, line);
       out.push({ zone, entity, action: "dry_run", detail: desc });
-      return true;
+      return;
     }
+    const rs = this.resend.get(entity);
+    if (rs && now < rs.next) { out.push({ zone, entity, action: "waiting", detail: `${desc}: resend in ${Math.ceil((rs.next - now) / 1000)} s` }); return; }
+    const tries = rs ? rs.tries + 1 : 1;
+    this.resend.set(entity, { tries, next: now + BACKOFF_MS[Math.min(tries - 1, BACKOFF_MS.length - 1)] });
     try {
       if (dom === "climate") {
         if (want.on && Number.isFinite(want.setpoint)) await this.ha.callService("climate", "set_temperature", entity, { temperature: want.setpoint, hvac_mode: want.mode });
@@ -58,15 +94,14 @@ class ClimateActuator {
         else await this.ha.callService("climate", "set_hvac_mode", entity, { hvac_mode: "off" });
       } else if (dom === "valve") await this.ha.callService("valve", want.on ? "open_valve" : "close_valve", entity);
       else await this.ha.callService(dom, want.on ? "turn_on" : "turn_off", entity);
-      this.commanded.set(entity, { mode: want.on ? want.mode : "off", setpoint: want.setpoint, at: now });
-      this.advice.set(entity, `set ${desc}`);
-      log.info(`climate ${zone}: ${entity} ${desc} — ${why}`);
-      out.push({ zone, entity, action: "set", detail: desc });
-      return true;
+      this.commanded.set(entity, { mode: want.on ? want.mode : "off", setpoint: want.setpoint, at: now, step: reading && reading.step });
+      this.advice.set(entity, `set ${desc}${tries > 1 ? ` (attempt ${tries})` : ""}`);
+      log.info(`climate ${zone}: ${entity} ${desc}${tries > 1 ? ` (attempt ${tries}: the unit hadn't followed)` : ""} — ${why}`);
+      out.push({ zone, entity, action: "set", detail: desc, attempt: tries });
     } catch (e) {
       log.error(`climate ${zone}: failed to set ${entity} ${desc}`, e.message);
+      this.advice.set(entity, `failed to set ${desc}: ${e.message}`);
       out.push({ zone, entity, action: "error", detail: e.message });
-      return false;
     }
   }
 
@@ -74,55 +109,63 @@ class ClimateActuator {
    * @param {object[]} zones     normalised zones
    * @param {Map} decisions      zone id -> resolve() decision
    * @param {Map} readings       zone id -> readZone() result
-   * @param {{dryRun: boolean, now: number}} opt
+   * @param {{dryRun: boolean, now: number, get?: Function}} opt  get(entity) reads a heat source's state
    */
-  async apply(zones, decisions, readings, { dryRun, now = Date.now() }) {
+  async apply(zones, decisions, readings, { dryRun, now = Date.now(), get = () => null }) {
     const out = [];
     const sources = new Map();   // source entity -> { on, o, zone }
+    const callFor = (o, zone, on) => {
+      if (!o.source_entity) return;
+      const src = sources.get(o.source_entity) || { on: false, o, zone };
+      src.on = src.on || on;
+      sources.set(o.source_entity, src);
+    };
     for (const z of zones) {
       const d = decisions.get(z.id), r = readings.get(z.id) || { outputs: [] };
-      if (!d || d.mode === "manual") continue;
       for (const [i, o] of z.outputs.entries()) {
         if (!o.entity) continue;
         const key = `${z.id}#${i}`, reading = r.outputs[i];
-        const s = this._state(key, reading, now);
-        const sp = Number.isFinite(d.setpoint) ? half(d.setpoint) : s.setpoint;
+        if (!reading || !reading.available) { callFor(o, z.id, false); this.advice.set(o.entity, "unavailable"); continue; }
+        const actual = { on: !!reading.on, mode: reading.on ? reading.mode : "off" };
+        const s = this._observe(key, actual, now);
+        // Not ours to command: held at a person's setting, advice-only, or no decision.
+        // Its running valve still needs the shared source.
+        if (!d || d.mode === "manual" || z.advise_only) { callFor(o, z.id, actual.on && actual.mode === "heat"); continue; }
+        const isClimate = o.entity.startsWith("climate.");
         let want;
-        if (o.entity.startsWith("climate.")) {
+        if (isClimate) {
           const mode = o.modes.includes(d.mode) ? d.mode : "off";
-          want = { on: mode !== "off", mode, setpoint: sp };
+          want = { on: mode !== "off", mode, setpoint: fitSetpoint(d.setpoint, reading) };
+        } else if (d.state === "fallback" || !Number.isFinite(r.temp)) {
+          want = { ...actual };   // no room temperature and no thermostat: leave the valve as it is
         } else {
           // A valve or pump: switch around the setpoint with a little hysteresis.
-          const T = r.temp, heat = d.mode === "heat" && Number.isFinite(T) && Number.isFinite(sp);
-          const on = heat && (T < sp - 0.2 || (s.on && T < sp + 0.3));
-          want = { on, mode: on ? "heat" : "off", setpoint: sp };
+          const T = r.temp, sp = d.setpoint, heat = d.mode === "heat" && Number.isFinite(sp);
+          const on = heat && (T < sp - 0.2 || (actual.on && T < sp + 0.3));
+          want = { on, mode: on ? "heat" : "off", setpoint: NaN };
         }
         const { want: w, held } = this._dwell(s, want, o, now);
         if (held) out.push({ zone: z.id, entity: o.entity, action: "held", detail: held });
-        const differs = w.on !== s.on || (w.on && (w.mode !== s.mode || (o.entity.startsWith("climate.") && w.setpoint !== s.setpoint)));
-        if (differs && await this._send(o.entity, w, { dryRun, now, zone: z.id, why: d.reason }, out)) {
-          if (w.on !== s.on || w.mode !== s.mode) s.changedAt = now;
-          Object.assign(s, { on: w.on, mode: w.on ? w.mode : "off", setpoint: w.setpoint });
-        }
-        if (o.source_entity) {
-          const src = sources.get(o.source_entity) || { on: false, o, zone: z.id };
-          src.on = src.on || (s.on && s.mode === "heat");
-          sources.set(o.source_entity, src);
-        }
+        const tol = (reading.step || 0.5) / 2 + 1e-6;
+        const matches = w.on === actual.on && (!w.on || (w.mode === actual.mode && (!isClimate || !Number.isFinite(w.setpoint) || Math.abs(w.setpoint - reading.setpoint) <= tol)));
+        if (matches) { this.resend.delete(o.entity); if (dryRun) this.advice.set(o.entity, "as wanted"); }
+        else await this._send(o.entity, w, reading, { dryRun, now, zone: z.id, why: d.reason }, out);
+        callFor(o, z.id, w.on && w.mode === "heat");
       }
     }
     // A shared heat source runs while any of its zones calls for heat.
     for (const [entity, src] of sources) {
-      const key = `source:${entity}`, s = this._state(key, null, now);
-      const { want: w, held } = this._dwell(s, { on: src.on, mode: src.on ? "heat" : "off", setpoint: s.setpoint }, src.o, now);
+      const st = get(entity);
+      if (!st || st.state === "unavailable" || st.state === "unknown") { this.advice.set(entity, "unavailable"); continue; }
+      const actual = { on: st.state !== "off", mode: st.state === "off" ? "off" : "heat" };
+      const s = this._observe(`source:${entity}`, actual, now);
+      const { want: w, held } = this._dwell(s, { on: src.on, mode: src.on ? "heat" : "off", setpoint: NaN }, src.o, now);
       if (held) out.push({ zone: src.zone, entity, action: "held", detail: held });
-      if (w.on !== s.on && await this._send(entity, { ...w, setpoint: NaN },
-        { dryRun, now, zone: src.zone, why: w.on ? "a zone calls for heat" : "no zone calls for heat" }, out)) {
-        s.changedAt = now; s.on = w.on; s.mode = w.mode;
-      }
+      if (w.on === actual.on) { this.resend.delete(entity); continue; }
+      await this._send(entity, w, null, { dryRun, now, zone: src.zone, why: w.on ? "a zone calls for heat" : "no zone calls for heat" }, out);
     }
     return out;
   }
 }
 
-module.exports = { ClimateActuator };
+module.exports = { ClimateActuator, fitSetpoint };

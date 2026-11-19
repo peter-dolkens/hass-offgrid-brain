@@ -119,19 +119,41 @@ class MqttSink {
     this.client.publish(`offgrid_brain/${key}`, String(value), { retain: true });
   }
 
-  /* Each climate zone is a child device of the brain (via_device), named once:
-     the device is "Climate zone" in the zone's area, and its entities are short
-     ("Target", "Mode"), as Home Assistant 2026.11's naming composes them. */
+  /* Each climate zone is a child device of the brain (via_device), named for the
+     zone and placed in its area when it has one; its entities are short ("Target",
+     "Mode"), as Home Assistant 2026.11's naming composes them. The zones announced
+     are persisted (zonesJSON / restoreZones), so a zone removed while the brain was
+     down is still cleaned up. */
+  zonesJSON() {
+    return Object.fromEntries([...this.zoneKeys].map(([id, keys]) => [id, { keys: [...keys], sig: (this.zoneSig || {})[id] || "" }]));
+  }
+  restoreZones(o) {
+    this.zoneSig = this.zoneSig || {};
+    for (const [id, v] of Object.entries(o && typeof o === "object" ? o : {})) {
+      if (!v || !Array.isArray(v.keys)) continue;
+      this.zoneKeys.set(id, new Set(v.keys.filter((k) => typeof k === "string")));
+      this.zoneSig[id] = String(v.sig || "");
+    }
+  }
+
   publishClimate(snap) {
     if (!this.enabled || !this.client || !this.client.connected || !snap) return;
+    this.zoneSig = this.zoneSig || {};
+    this.lastText = this.lastText || new Map();
     const live = new Set();
     for (const z of snap.zones || []) {
       live.add(z.id);
       const keys = this.zoneKeys.get(z.id) || new Set();
       this.zoneKeys.set(z.id, keys);
+      // A renamed zone, or one moved to another area: announce its entities again.
+      const sig = `${z.name}|${z.area || ""}`;
+      if (this.zoneSig[z.id] !== sig) {
+        for (const k of keys) this.announced.delete(k);
+        this.zoneSig[z.id] = sig;
+      }
       const device = {
-        identifiers: [`offgrid_brain_climate_${z.id}`], name: "Climate zone", via_device: "offgrid_brain",
-        manufacturer: "Off-Grid Brain", model: "Climate zone", suggested_area: z.area || z.name,
+        identifiers: [`offgrid_brain_climate_${z.id}`], name: z.name || z.id, via_device: "offgrid_brain",
+        manufacturer: "Off-Grid Brain", model: "Climate zone", ...(z.area ? { suggested_area: z.area } : {}),
       };
       const pub = (component, key, value, cfg) => { keys.add(`${component}/climate_${z.id}_${key}`); this.publish(component, `climate_${z.id}_${key}`, value, cfg, device); };
       const p = z.plan || {}, d = z.decision || {}, temp = { unit_of_measurement: "°C", device_class: "temperature", state_class: "measurement" };
@@ -140,7 +162,12 @@ class MqttSink {
       pub("sensor", "mode", d.mode || "off", { name: "Mode", device_class: "enum", options: ["heat", "cool", "off", "manual"], icon: "mdi:hvac" });
       pub("sensor", "level", d.level || "none", { name: "Comfort level", device_class: "enum",
         options: ["protect", "setback", "comfort", "precondition", "soak", "rule", "none"], icon: "mdi:stairs" });
-      pub("sensor", "reason", String(d.reason || "").slice(0, 255), { name: "Reason", icon: "mdi:text-box-outline" });
+      // Text changes often in wording only: published when it changes, as a diagnostic.
+      const reason = String(d.reason || "").slice(0, 255);
+      if (this.lastText.get(z.id) !== reason || !this.announced.has(`sensor/climate_${z.id}_reason`)) {
+        pub("sensor", "reason", reason, { name: "Reason", icon: "mdi:text-box-outline", entity_category: "diagnostic" });
+        this.lastText.set(z.id, reason);
+      } else keys.add(`sensor/climate_${z.id}_reason`);
       pub("sensor", "comfort_low", num(z.band ? z.band.low : NaN, 1), { name: "Band low", ...temp, icon: "mdi:thermometer-chevron-down" });
       pub("sensor", "comfort_high", num(z.band ? z.band.high : NaN, 1), { name: "Band high", ...temp, icon: "mdi:thermometer-chevron-up" });
       pub("binary_sensor", "occupied", p.occupied ? "ON" : "OFF", { name: "Occupied", device_class: "occupancy" });
@@ -163,6 +190,7 @@ class MqttSink {
         this.announced.delete(k);
       }
       this.zoneKeys.delete(id);
+      delete this.zoneSig[id];
     }
   }
 

@@ -60,8 +60,29 @@ const TIMELINE_SAVE_MS = 5 * 60 * 1000;
 // What the climate brain has learned (preferences, occupancy, thermal models, meters).
 const CLIMATE_PATH = process.env.CLIMATE_STATE_PATH || "/data/climate.json";
 const OUTLOOK_MS = 15 * 60 * 1000;
+/** The climate brain's learning. An unreadable file is set aside as .corrupt (not
+    lost, not fatal) and learning starts again. */
 function loadClimate() {
-  try { return JSON.parse(fs.readFileSync(CLIMATE_PATH, "utf8")); } catch { return {}; }
+  let raw;
+  try { raw = fs.readFileSync(CLIMATE_PATH, "utf8"); } catch { return {}; }
+  try {
+    const s = JSON.parse(raw);
+    if (!s || typeof s !== "object" || Array.isArray(s)) throw new Error("not an object");
+    return s;
+  } catch (e) {
+    try { fs.renameSync(CLIMATE_PATH, `${CLIMATE_PATH}.corrupt`); } catch { /* best effort */ }
+    log.error(`climate: ${CLIMATE_PATH} is unreadable (${e.message}); kept as climate.json.corrupt, learning starts again`);
+    return {};
+  }
+}
+/** A climate brain from saved state, or a fresh one if that state can't be used. */
+function makeClimate(ha) {
+  try { return new ClimateBrain({ ha, state: loadClimate() }); }
+  catch (e) {
+    log.error("climate: saved learning couldn't be loaded; starting fresh", e.stack || e.message);
+    try { fs.renameSync(CLIMATE_PATH, `${CLIMATE_PATH}.corrupt`); } catch { /* best effort */ }
+    return new ClimateBrain({ ha });
+  }
 }
 function saveClimate(c) {
   try { fs.writeFileSync(`${CLIMATE_PATH}.tmp`, JSON.stringify(c.toJSON())); fs.renameSync(`${CLIMATE_PATH}.tmp`, CLIMATE_PATH); }
@@ -101,10 +122,14 @@ async function main() {
   // Hourly PV forecast from whatever forecast integrations the Energy dashboard has.
   const forecast = new SolarForecast({ ha });
   // The climate brain: zones planned and offered to the ladder as comfort levels.
-  const climate = new ClimateBrain({ ha, state: loadClimate() });
+  const climate = makeClimate(ha);
   ha.onReady = () => {
     forecast.refresh().catch((e) => log.warn("solar forecast unavailable", e.message));
     climate.seed().catch((e) => log.warn("climate: history seed failed", e.message));
+  };
+  const configureClimate = (next) => {
+    try { climate.configure(next.climate, { toutEntity: next.sources.outdoor_temp }); }
+    catch (e) { log.error("climate: settings couldn't be applied; climate is off until they can", e.stack || e.message); climate.configure({ enabled: false }); }
   };
   forecast.start();
   // A second forecast (Solcast) logged beside the first, for comparison only.
@@ -122,6 +147,7 @@ async function main() {
 
   const actuator = new Actuator({ ha, devices: policy.devices, dryRun: settings.dry_run });
   const saved = loadState();
+  mqttSink.restoreZones(saved.mqttZones);
   let history = LoadHistory.fromJSON(saved.history, settings.autonomy.window_days, settings.autonomy.seed_load_kwh);
   // Per-array factors learned so far (irradiance -> available kW) survive restarts.
   const estimator = new SolarEstimator({ state: saved.solar });
@@ -184,7 +210,7 @@ async function main() {
     }
     if (changed("solar")) inverters.configure(next.solar.inverters);
     if (changed("climate") || changed("sources")) {
-      climate.configure(next.climate, { toutEntity: next.sources.outdoor_temp });
+      configureClimate(next);
       if (prev) climate.seed().catch((e) => log.warn("climate: history seed failed", e.message));
     }
     if (changed("tick_seconds")) {
@@ -241,7 +267,7 @@ async function main() {
       forecast: ranged,
       // Climate projects its own load, so its recorded draw comes out of the profile.
       load: loadProfile(past, lastTick.loadKw, { lessClimate: climate.enabled }),
-      expand: climate.enabled ? (t, c) => { try { return climate.expandAt(policy, t, c); } catch { return policy; } } : null,
+      expand: climate.enabled ? (t, c, start) => { try { return climate.expandAt(policy, t, c, start); } catch { return policy; } } : null,
       autonomy: lastTick.autonomy,
       overheadKw,
       running: lastRunning,
@@ -260,11 +286,17 @@ async function main() {
     getState: () => snapshot,
     getPolicy: () => policy,
     check,
-    preview: (p) => (lastCtx ? summarise(decide(climate.expand(p), lastCtx, limits, lastRunning, socHistory)) : null),
+    preview: (p) => {
+      if (!lastCtx) return null;
+      let walk = p;
+      try { walk = climate.expand(p); } catch (e) { log.warn("climate: preview without climate", e.message); }
+      return summarise(decide(walk, lastCtx, limits, lastRunning, socHistory));
+    },
     apply: (p) => { applyPolicy(p); runTick(); },   // show the new policy's decisions straight away
     settingsPath: Settings.SETTINGS_PATH,
     getSettings: () => settings,
-    checkSettings: (s) => Settings.check(Settings.normalise(s)),
+    // Problems normalising would hide are checked on the settings as submitted.
+    checkSettings: (s) => [...Settings.checkRaw(s), ...Settings.check(Settings.normalise(s))],
     applySettings: (s) => {
       const next = Settings.normalise(s);
       Settings.save(next);
@@ -450,14 +482,25 @@ async function main() {
     // A fault in the climate brain must never stop load shedding: fall back to the
     // policy as written and log it.
     let walked = policy;
+    // The real outdoor reading for climate (NaN when there's none): never the 20 °C
+    // stand-in the context uses.
+    const toutReal = Number.isFinite(toutEnt.value) && toutEnt.ageSec < 30 * 60 ? toutEnt.value : NaN;
     try {
-      climate.tick(now.getTime(), { tout: ctx.tout, sun: !!ctx.sun, soc });
+      climate.tick(now.getTime(), { tout: toutReal, sun: !!ctx.sun, soc, irradiance });
       walked = climate.expand(policy);
-    } catch (e) { log.error("climate planning failed; walking the policy without it", e.stack || e.message); }
+    } catch (e) {
+      log.error("climate planning failed; walking the policy without it", e.stack || e.message);
+      climate.markFailed();
+      walked = policy;
+    }
     lastWalked = walked;
-    const result = decide(walked, ctx, limits, lastRunning, socUsable ? socHistory : []);
-    try { climate.resolve(result); } catch (e) { log.error("climate resolve failed", e.stack || e.message); }
-    lastRunning = new Set(result.decisions.filter((d) => d.run).map((d) => d.id));
+    const hist = socUsable ? socHistory : [];
+    const result = decide(walked, ctx, limits, lastRunning, hist);
+    // Advisory zones (no outputs) are walked in a shadow list: what they would get,
+    // without taking budget from real loads.
+    try { if (!climate.failed) climate.resolve(result, () => decide(climate.expand(policy, undefined, { advisory: true }), ctx, limits, lastRunning, hist)); }
+    catch (e) { log.error("climate resolve failed", e.stack || e.message); climate.markFailed(); }
+    lastRunning = new Set([...result.decisions.filter((d) => d.run).map((d) => d.id), ...(result.grantedKeys || [])]);
     for (const e of result.errors) log.error(`policy expression: ${e}`);
 
     // Log at info only when what runs changes (and as a heartbeat); every tick at debug.
@@ -540,7 +583,7 @@ async function main() {
     if (now - climateSavedAt >= TIMELINE_SAVE_MS) { saveClimate(climate); climateSavedAt = now.getTime(); }
     mqttSink.publishTick({ ctx, result, safeMode, dryRun, inputs: snapshot.inputs, solar });
     mqttSink.publishClimate(snapshot.climate);
-    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), available: availMeter.toJSON(), hourlog: hourLog.toJSON(), irrguard: irrGuard.toJSON(), updated: now.toISOString() });
+    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), available: availMeter.toJSON(), hourlog: hourLog.toJSON(), irrguard: irrGuard.toJSON(), mqttZones: mqttSink.zonesJSON(), updated: now.toISOString() });
   }
 
   applySettings(settings);
@@ -548,7 +591,7 @@ async function main() {
 
   process.on("SIGTERM", () => {
     log.info("shutting down");
-    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), available: availMeter.toJSON(), hourlog: hourLog.toJSON(), irrguard: irrGuard.toJSON() });
+    saveState({ history: history.toJSON(), solar: estimator.toJSON(), meter: meter.toJSON(), available: availMeter.toJSON(), hourlog: hourLog.toJSON(), irrguard: irrGuard.toJSON(), mqttZones: mqttSink.zonesJSON() });
     recorder.save(TIMELINE_PATH);
     saveClimate(climate);
     process.exit(0);
