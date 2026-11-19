@@ -39,12 +39,16 @@ const obj = (x) => (x && typeof x === "object" && !Array.isArray(x) ? x : {});
 const newCtx = () => ({ seen: new Map(), acc: new Map(), presentAt: new Map(), openSince: new Map(),
   holdSampleAt: new Map(), curveAt: new Map(), energy: new Map(), quiet: new Map(), loud: new Map(), lag: new Map() });
 
-/** Did this setting come from the brain's own command (within one setpoint step)? */
+/** Is this setting the brain's own command? Commands are sent on the unit's step, so
+    anything a step away (a person's one press) is not: under half a step matches. */
 function sameAsCommanded(cmd, cur, step = 0.5) {
   if (!cmd || cmd.mode !== cur.mode) return false;
   if (cur.mode === "off" || !Number.isFinite(cmd.setpoint)) return true;
-  return Math.abs(cmd.setpoint - cur.setpoint) <= (cmd.step || step) + 1e-6;
+  return Math.abs(cmd.setpoint - cur.setpoint) < (cmd.step || step) / 2;
 }
+
+// How much a change teaches, by who made it.
+const WEIGHT = { human: 1, unknown: 0.3 };
 
 class ClimateBrain {
   constructor({ ha, state = {}, actuator } = {}) {
@@ -164,17 +168,26 @@ class ClimateBrain {
     }
   }
 
-  /** Who made a change: "ours" (the brain's command or its own HA user/context),
-      "automation" (a context with a parent: an automation or script), else "human"
-      (someone in the UI, an app, or at the unit itself). Only people teach. */
+  /** Who made a change, from Home Assistant's state context:
+        "ours"       one of the brain's own calls (its context, or its HA user), or a
+                     setting equal to its last command with no other user on it;
+        "human"      a user other than the brain (the UI, an app);
+        "automation" a context with a parent (an automation or script reacting to
+                     something);
+        "unknown"    a bare context (no user, no parent: a time- or sun-triggered
+                     automation, or someone at the unit's own buttons), or none (the
+                     recorder's history has no context).
+      People teach; unknown teaches weakly and never holds as an override. */
   classify(cur, context, cmd, step) {
-    if (sameAsCommanded(cmd, cur, step)) return "ours";
-    if (context && typeof context === "object") {
-      if (this.ha && this.ha.ourContexts && context.id && this.ha.ourContexts.has(context.id)) return "ours";
-      if (this.ha && this.ha.userId && context.user_id === this.ha.userId) return "ours";
-      if (context.parent_id) return "automation";
+    const c = context && typeof context === "object" ? context : null;
+    if (c) {
+      if (this.ha && this.ha.ourContexts && c.id && this.ha.ourContexts.has(c.id)) return "ours";
+      if (this.ha && this.ha.userId && c.user_id === this.ha.userId) return "ours";
+      if (c.user_id) return "human";
     }
-    return "human";
+    if (sameAsCommanded(cmd, cur, step)) return "ours";
+    if (c && c.parent_id) return "automation";
+    return "unknown";
   }
 
   /** Everything learned from one zone's readings at time `now`. */
@@ -202,9 +215,10 @@ class ClimateBrain {
         const moved = (a, b) => Number.isFinite(a) !== Number.isFinite(b) || (Number.isFinite(a) && Math.abs(a - b) >= Math.min(0.25, step / 2));
         const changed = prev.mode !== cur.mode || moved(prev.setpoint, cur.setpoint) || moved(prev.low, cur.low) || moved(prev.high, cur.high);
         if (changed) {
-          const who = this.classify(cur, out.context, cmd, step);
+          // History replay has no context: its changes are at best "unknown".
+          const who = this.classify(cur, live ? out.context : null, cmd, step);
+          if (WEIGHT[who]) this._learnSetpoint(z.id, now, cur, WEIGHT[who] * (who === "human" && cmd ? 1.5 : 1));
           if (who === "human") {
-            this._learnSetpoint(z.id, now, cur, cmd ? 1.5 : 1);
             if (live && cmd && cfg.override_hold_min > 0) {
               this.overrides[z.id] = { mode: cur.mode, setpoint: cur.setpoint, until: now + cfg.override_hold_min * MIN, at: now };
               log.info(`climate ${z.id}: ${o.entity} changed by hand to ${cur.mode}${Number.isFinite(cur.setpoint) ? ` ${cur.setpoint} °C` : ""}; respecting it for ${cfg.override_hold_min} min`);
@@ -215,7 +229,7 @@ class ClimateBrain {
       // A setting left alone is a preference too (weakly), sampled hourly while
       // occupied, unless it is what the brain itself set.
       const occupied = r.presence === true || (r.presence == null && houseOcc(new Date(now).getHours()));
-      if (!sameAsCommanded(cmd, cur, step) && occupied && (cur.mode === "heat" || cur.mode === "cool")
+      if (live && !sameAsCommanded(cmd, cur, step) && occupied && (cur.mode === "heat" || cur.mode === "cool")
           && this.classify(cur, out.context, cmd, step) === "human" && now - (ctx.holdSampleAt.get(o.entity) || 0) >= HOUR) {
         ctx.holdSampleAt.set(o.entity, now);
         this._learnSetpoint(z.id, now, cur, 0.15);
@@ -436,6 +450,15 @@ class ClimateBrain {
       try { shadow = shadowFn(); } catch (e) { log.warn("climate: shadow walk failed", e.message); }
     }
     this.decisions = Ladder.resolve(this.zones, this.plans, result, shadow);
+    // A person's setting the battery couldn't afford is dropped, not resumed later:
+    // when comfort comes back the brain plans it, from preferences that already learned
+    // the setting (at 1.5x). Resuming a stale setting hours later would surprise more.
+    for (const [id, d] of this.decisions) {
+      if (d.overruled && this.overrides[id]) {
+        log.info(`climate ${id}: the setting by hand (${this.overrides[id].mode} ${this.overrides[id].setpoint}) isn't affordable now; dropped, the brain plans this zone again`);
+        delete this.overrides[id];
+      }
+    }
     return this.decisions;
   }
 

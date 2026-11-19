@@ -19,10 +19,14 @@
   load a zone takes over, with modelled kW and the zone's own `occ` and `gap`. Each
   level has its own hysteresis. Live warns about a level placed under the 100% rung.
 - **Learning.** Setpoints people choose, by zone, weekday/weekend, hour and heat/cool,
-  with decay and confidence. Only people teach: the brain's own commands (remembered
-  across restarts, matched within the unit's setpoint step), its own HA user, and
-  automations are told apart by Home Assistant's state context. A person's change to
-  what the brain set is respected for a while, as long as comfort is affordable.
+  with decay and confidence, weighted by who made each change (Home Assistant's
+  state context): people fully, bare contexts (time-triggered automations, the
+  unit's buttons) and history at 0.3, the brain's own commands (remembered across
+  restarts, within half a step) and reacting automations not at all. A person's
+  change to what the brain set is respected for a while, while comfort is
+  affordable; if the battery overrules it, it's dropped and the zone planned again.
+  Turned off by hand stays off, but protection still heats a freezing room.
+  `climate.json` can be deleted before going live to start learning afresh.
   Occupancy by hour of the week, for pre-conditioning (which holds once started, with
   a grace past the expected arrival). A thermal model per zone with solar gain and
   hydronic lag, fit online, gating itself by confidence. Seeded from HA history on
@@ -35,7 +39,9 @@
   running units after a learned baseline (approximate); "only climate on this
   circuit" attributes unannounced draw.
 - **Control.** Reconciles with each unit every tick and resends, with a backoff, what
-  it doesn't follow. Setpoints on the unit's step and inside its range; minimum run
+  it doesn't follow (a new want goes at once; protection at least every 5 min;
+  failed calls retried each minute; a unit held by its minimum run keeps its own
+  setpoint). Setpoints on the unit's step and inside its range; minimum run
   and off times from when the unit was seen to change, kept across restarts; heat ↔
   cool through off. Losing the room temperature hands the unit's own thermostat the
   setback instead of switching it off. Zones with no outputs are advisory: a shadow
@@ -45,8 +51,8 @@
   can pre-cool before a hot afternoon or pre-heat before a cold night, never against
   what the room needs now. Off by default until validated on real hardware.
 - **Projection** includes climate's planned load (with the cost of recovering a room
-  from its setback), takes recorded climate draw out of the load profile, and leaves
-  advisory zones out.
+  from its setback), takes recorded climate draw out of the load profile (older
+  minutes kept per hour until newer ones cover it), and leaves advisory zones out.
 - **Panel and MQTT.** A Climate card on Live; climate levels tagged in the dispatch
   list. Each zone is a child MQTT device of the brain, named for the zone and in its
   area, with Target, Mode, Comfort level, band, occupancy, planned power and
@@ -54,7 +60,8 @@
   up across restarts.
 - Entity pickers compose names from the device and entity registries, respecting
   `has_entity_name` (Home Assistant 2026.11 naming) instead of the deprecated
-  `friendly_name`. Entity freshness uses Home Assistant's `last_reported`.
+  `friendly_name`. Entity freshness uses Home Assistant's `last_reported`, re-read
+  every 3 minutes.
 - Settings are checked as submitted as well as normalised, and the file as it was
   before an upgrade is kept as `settings.json.pre-<version>`.
 - **Simulator.** `climate` entries, and the `kw`, `vars` and `floor` entry fields, are

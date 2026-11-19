@@ -124,12 +124,14 @@ function planZone(o) {
   leadMin = Math.round(clamp(leadMin, 10, cfg.precondition_max_min));
 
   const fallback = !!o.noReading;
-  const blocked = o.windowOpen ? "window" : manual && manual.mode === "off" ? "manual-off" : !side && !soakSide ? "no-side" : null;
+  // Turned off by hand blocks everything but protection (a freezing room still heats).
+  const manualOff = !!(manual && manual.mode === "off");
+  const blocked = o.windowOpen ? "window" : !side && !soakSide ? "no-side" : null;
   const levels = {};
   for (const level of LEVELS) {
     const s = level === "soak" ? soakSide : side;
     const sp = s ? spFor(level, s) : 0;
-    let active = !blocked && !!s, why = "";
+    let active = !blocked && !!s && (!manualOff || level === "protect"), why = "";
     if (level === "protect") why = `hold ${r1(setpointFor(s, sp))} °C (protection)`;
     else if (level === "setback") why = o.away ? "house away: widest comfort band" : "outside occupied hours";
     else if (level === "comfort") {
@@ -161,7 +163,7 @@ function planZone(o) {
   return {
     id: zone.id, name: zone.name, side, soakSide, temp: r1(temp), humidity: o.humidity, tout: r1(tout),
     comfort: { heat: r1(heat), cool: r1(cool), confidence: o.comfort.confidence, humid }, inBand,
-    occupied: !!o.occupied, away: !!o.away, nextOccMin: o.nextOccMin, leadMin, blocked, fallback, manual,
+    occupied: !!o.occupied, away: !!o.away, nextOccMin: o.nextOccMin, leadMin, blocked, manualOff, fallback, manual,
     levels, cap, ratedKw: Math.max(cap.heat || 0, cap.cool || 0),
     gap: side && hasTout ? r1(Math.abs(tout - comfortSet(side))) : 0,
     setpointFor, spFor, kwFor,

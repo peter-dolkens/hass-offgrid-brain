@@ -104,17 +104,19 @@ class Recorder {
 /** Load (kW) by time of day from recorded samples: the mean of each hour of the
     day, falling back to the overall mean, then to `fallbackKw`. */
 function loadProfile(samples, fallbackKw, { lessClimate = false } = {}) {
+  // With the climate brain projecting its own load, the recorded climate draw is taken
+  // out. Minutes recorded before it was (no climKw) may hold climate load too, so for
+  // each hour of the day they're used only until newer minutes with the figure cover
+  // that hour: the profile doesn't go flat the day climate is enabled.
+  const covered = new Array(24).fill(false);
+  if (lessClimate) for (const s of samples) if (Number.isFinite(s.loadKw) && Number.isFinite(s.climKw)) covered[new Date(s.t).getHours()] = true;
   const sum = new Array(24).fill(0), n = new Array(24).fill(0);
   let all = 0, alln = 0;
-  const withClim = lessClimate && samples.some((s) => Number.isFinite(s.climKw));
   for (const s of samples) {
     if (!Number.isFinite(s.loadKw)) continue;
-    // With the climate brain projecting its own load, the recorded climate draw is
-    // taken out. Samples recorded before it was (no climKw) might hold climate load
-    // too, so they're left out while any sample has the figure.
-    if (lessClimate && withClim && !Number.isFinite(s.climKw)) continue;
-    const kw = lessClimate && Number.isFinite(s.climKw) ? Math.max(0, s.loadKw - s.climKw) : s.loadKw;
     const h = new Date(s.t).getHours();
+    if (lessClimate && covered[h] && !Number.isFinite(s.climKw)) continue;
+    const kw = lessClimate && Number.isFinite(s.climKw) ? Math.max(0, s.loadKw - s.climKw) : s.loadKw;
     sum[h] += kw; n[h]++; all += kw; alln++;
   }
   const mean = alln ? all / alln : fallbackKw;

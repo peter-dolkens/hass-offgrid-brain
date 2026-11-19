@@ -122,8 +122,9 @@ power only when there is no power entity: the rate between counter changes, 0 af
    by the occupancy time), at least the steady-state holding power near the setpoint,
    capped at the outputs' rating, made non-decreasing protect -> soak.
 5. Window/door open (after `window_delay_s`) -> no levels -> off.
-6. No room temperature (stale = not reported within 3 h by HA's `last_reported`, or
-   unavailable) -> fallback: only protect and setback, handed to the unit's thermostat.
+6. No room temperature (stale = not reported within 3 h by HA's `last_reported`,
+   re-read via get_states every 3 min because `state_reported` can't be subscribed
+   without a filter; or unavailable) -> fallback: only protect and setback, handed to the unit's thermostat.
 7. The thermal model plans only above 30% confidence; below, the floor-area prior.
 
 ## Ladder integration
@@ -180,19 +181,37 @@ recovery energy is included.
 
 ## Learning provenance (who changed a setting)
 
-Only people teach preferences. A thermostat change is the brain's own if it matches
-the last command for that entity within one setpoint step (commands persist across
-restarts, with no time limit, so a late echo is still ours), or its HA context is one
-of the brain's service calls or carries the brain's own user id (`auth/current_user`);
-it's an automation's if its context has a `parent_id`; otherwise a person's (UI, app,
-or the unit's own buttons). The same rules apply to history replay (compressed
-history's `c` context where present, plus the persisted commands). Hold samples of an
-untouched setting are skipped when it equals the brain's command.
+From Home Assistant's state context, in this order:
+
+1. the context id is one of the brain's own service calls, or its `user_id` is the
+   brain's (`auth/current_user`) -> **ours**;
+2. any other `user_id` -> **human** (a person can set exactly what the brain had);
+3. within half a setpoint step of the last command (commands are sent on the unit's
+   step, persist across restarts and never expire, so a late echo is still ours, but a
+   person's one-step press isn't) -> **ours**;
+4. a `parent_id` -> **automation** (reacting to something);
+5. otherwise -> **unknown**: a bare context (time/sun-triggered automation, the unit's
+   own buttons, IR remote) or no context at all.
+
+Weights: human 1 (1.5 when it changes what the brain set, which also starts an
+override hold), unknown 0.3 with no hold, ours/automation 0. Untouched-setting samples
+are taken only for human-set settings, live. History replay has no context (the
+recorder doesn't keep it), so its changes count as unknown and no untouched samples
+are taken: history seeds a weak starting point; occupancy and the thermal model seed
+fully. `climate.json` may be deleted before going live to reset learning.
+
+An override that the ladder overrules (comfort not granted) is dropped rather than
+resumed later; the person's setting is already in the preferences at 1.5x, so the
+brain's own comfort plan leans toward it when comfort returns. Turned off by hand
+blocks every level but protect: a freezing room is still heated (`protecting`), and the
+person's off stands again once it isn't.
 
 ## Actuation
 
 Reconcile every tick: wanted vs actual (each output's reading), resend on mismatch with
-a 1/2/5/10/30-min backoff (also on call failure). Setpoints rounded to
+a 1/2/5/10/30-min backoff per entity, reset when the want changes, capped at 5 min for
+protect; a failed call retries every minute without escalating. A unit held by its
+minimum run keeps its own setpoint (no cross-side setpoint is sent). Setpoints rounded to
 `target_temp_step` and clamped to `min_temp`/`max_temp`. Dwell is timed from observed
 changes (persisted; first sight owes a dwell); heat <-> cool goes through off; dry run
 and advise-only zones change nothing. The shared source's state is read from HA; a

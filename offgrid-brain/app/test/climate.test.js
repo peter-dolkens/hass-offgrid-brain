@@ -428,7 +428,7 @@ t("brain: a hand change to what the brain set is an override: learned strongly, 
   const { b } = brainWith(st);
   b.actuator.commanded.set("climate.office", { mode: "heat", setpoint: 21, at: MON + 18 * HOUR });
   b.tick(MON + 18 * HOUR + 30000, { tout: 8, sun: false, soc: 80 });
-  st["climate.office"] = { state: "heat", attributes: { temperature: 23 } };
+  st["climate.office"] = { state: "heat", attributes: { temperature: 23 }, context: { id: "p1", user_id: "peter", parent_id: null } };
   const plans = b.tick(MON + 18 * HOUR + 10 * MIN, { tout: 8, sun: false, soc: 80 });
   assert.ok(b.overrides.office && b.overrides.office.setpoint === 23);
   assert.ok(b.prefs.preferred("office", MON + 18 * HOUR, "heat", 20).learned > 22.9);
@@ -468,13 +468,14 @@ t("[H4] brain: a unit rounding the brain's setpoint, or echoing it late, is not 
   const st = { "sensor.office_t": { state: "18" }, "climate.office": { state: "heat", attributes: { temperature: 20, target_temp_step: 1 } } };
   const { b } = brainWith(st);
   b.tick(MON + 18 * HOUR, { tout: 8 });
-  b.actuator.commanded.set("climate.office", { mode: "heat", setpoint: 20.5, at: MON + 18 * HOUR + 5000 });
-  st["climate.office"] = { state: "heat", attributes: { temperature: 21, target_temp_step: 1 } };
+  // The actuator sends 20.5 as 21 on a 1° unit (fitSetpoint), and remembers 21.
+  b.actuator.commanded.set("climate.office", { mode: "heat", setpoint: fitSetpoint(20.5, { step: 1 }), at: MON + 18 * HOUR + 5000, step: 1 });
+  st["climate.office"] = { state: "heat", attributes: { temperature: 21, target_temp_step: 1 }, context: { id: "ours1" } };
   b.tick(MON + 18 * HOUR + 10000, { tout: 8 });
-  assert.ok(!b.overrides.office, "rounded to the unit's step");
+  assert.ok(!b.overrides.office, "its own step-rounded command");
   b.actuator.commanded.set("climate.office", { mode: "heat", setpoint: 19, at: MON + 18 * HOUR + MIN, step: 1 });
   b.tick(MON + 18 * HOUR + 8 * MIN, { tout: 8 });   // still showing 21
-  st["climate.office"] = { state: "heat", attributes: { temperature: 19, target_temp_step: 1 } };
+  st["climate.office"] = { state: "heat", attributes: { temperature: 19, target_temp_step: 1 }, context: { id: "ours2" } };
   b.tick(MON + 18 * HOUR + 12 * MIN, { tout: 8 });   // the echo, 11 min later
   assert.ok(!b.overrides.office, "a late echo is still ours");
   assert.strictEqual(fitSetpoint(20.6, { step: 1 }), 21);
@@ -745,7 +746,7 @@ t("[LOW] settings: zones normalised; problems normalising would hide are caught 
   assert.deepStrictEqual(Settings.check(Settings.normalise(bad)).filter((p) => /energy class|kind/.test(p)), [], "normalising hides them: hence the raw check");
 });
 
-t("[H3/M6] seed: history replays a day per request, per entity; automations and the brain's past commands don't teach", async () => {
+t("[H3/M6/RR6] seed: a day per request, per entity; history has no context, so changes teach only weakly, and the brain's own never", async () => {
   const s = (iso, state, a, c) => ({ s: state, ...(a ? { a } : {}), ...(c ? { c } : {}), lu: at(iso) / 1000 });
   const rows = {
     "sensor.office_t": [s("2026-11-02T06:00:00", "18")],
@@ -762,8 +763,10 @@ t("[H3/M6] seed: history replays a day per request, per entity; automations and 
   await seedFromHistory(b, b.zones, { start: at("2026-11-02T00:00:00"), end: at("2026-11-04T00:00:00") });
   assert.strictEqual(requests.length, 2 * 3, "one request per entity per day");
   assert.ok(requests.every((m) => m.entity_ids.length === 1 && m.no_attributes === !m.entity_ids[0].startsWith("climate.")));
-  assert.strictEqual(b.prefs.preferred("office", at("2026-11-09T07:00:00"), "heat", 20).learned, null, "the automation's 25 and the brain's 17 aren't learned");
-  near(b.prefs.preferred("office", at("2026-11-09T19:00:00"), "heat", 20).learned, 22, 0.01, "the person's 22 is");
+  assert.ok(b.prefs.preferred("office", at("2026-11-09T08:00:00"), "heat", 20).learned > 24, "the brain's own 17 isn't learned (the 25 next to it is, weakly)");
+  const eve = b.prefs.preferred("office", at("2026-11-09T19:00:00"), "heat", 20);
+  near(eve.learned, 22, 0.01, "the 22 is learned");
+  assert.ok(eve.confidence < 0.25, `but weakly: ${eve.confidence}`);
   assert.ok(b.occ.probability("office", at("2026-11-09T20:00:00")).p > b.occ.probability("office", at("2026-11-09T10:00:00")).p);
   const hist = parseHistory({ "climate.office": rows["climate.office"] });
   assert.strictEqual(hist.get("climate.office")[1].context.parent_id, "auto");
@@ -791,6 +794,187 @@ t("[H7/LOW] ha: freshness from Home Assistant's last_reported; context kept; nam
   })[m.type];
   const names = Object.fromEntries((await ha.listEntities()).map((x) => [x.entity_id, x.name]));
   assert.deepStrictEqual(names, { "sensor.a": "Hall sensor Temperature", "sensor.b": "Hall sensor", "sensor.c": "Hall sensor temperature", "sensor.d": "Hall sensor battery" });
+});
+
+// ======================================================================= re-review (RR1-RR8)
+
+const STEP1 = { target_temp_step: 1, min_temp: 16, max_temp: 30 };
+function liveBrain(st) {
+  const ha = fakeHa(st, { userId: "brain" });
+  const b = new ClimateBrain({ ha });
+  b.configure({ enabled: true, zones: [{ ...ZONE_CFG, presence_entities: ["binary_sensor.o"], outputs: [{ kind: "ac", entity: "climate.office", kw: 1.5 }] }] });
+  b._run = new Set();
+  b.cycle = async (t, soc, dryRun = false) => {
+    b.tick(t, { tout: 8, sun: false, soc });
+    const r = decide(b.expand(DEFAULT_POLICY), { ...CTX, soc }, LIMITS, b._run);
+    b.resolve(r);
+    b._run = new Set([...r.decisions.filter((d) => d.run).map((d) => d.id), ...r.grantedKeys]);
+    return b.apply({ dryRun, now: t });
+  };
+  return { b, ha };
+}
+
+t("brain: without the brain commanding (dry run), a person's change is learned but not held", () => {
+  const st = { "sensor.office_t": { state: "18" }, "climate.office": { state: "cool", attributes: { temperature: 25 } } };
+  const { b } = brainWith(st);
+  b.tick(MON + 14 * HOUR, { tout: 30, sun: true, soc: 80 });
+  st["climate.office"] = { state: "cool", attributes: { temperature: 23.5 }, context: { id: "p2", user_id: "peter" } };
+  b.tick(MON + 14 * HOUR + MIN, { tout: 30, sun: true, soc: 80 });
+  assert.ok(!b.overrides.office);
+  near(b.prefs.preferred("office", MON + 14 * HOUR, "cool", 25).learned, 23.5, 0.01);
+});
+
+t("[RR1] actuator: a side flip during the minimum run sends nothing (the unit keeps its own setpoint)", async () => {
+  for (const [unit, usp, dm, dsp] of [["heat", 20, "cool", 25], ["cool", 25, "heat", 20]]) {
+    const ha = fakeHa({}), act = new ClimateActuator({ ha });
+    const rd = new Map([["office", { temp: 22, outputs: [{ available: true, step: 0.5, on: true, mode: unit, setpoint: usp }] }]]);
+    await act.apply([ac()], dec(unit, usp), rd, { dryRun: false, now: MON });
+    const out = await act.apply([ac()], dec(dm, dsp), rd, { dryRun: false, now: MON + 60000 });
+    assert.strictEqual(ha.calls.length, 0, `${unit} -> ${dm}: ${JSON.stringify(ha.calls)}`);
+    assert.strictEqual(out[0].action, "held");
+  }
+});
+
+t("[RR2] brain: a person's one-step nudge is theirs, not reverted as the brain's own", async () => {
+  const st = { "sensor.office_t": { state: "18" }, "binary_sensor.o": { state: "on" }, "climate.office": { state: "heat", attributes: { temperature: 20, ...STEP1 } } };
+  const { b, ha } = liveBrain(st);
+  let t = MON + 18 * HOUR;
+  b.actuator.obs.set("office#0", { on: true, mode: "heat", changedAt: t - HOUR });
+  b.actuator.commanded.set("climate.office", { mode: "heat", setpoint: 20, at: t - HOUR, step: 1 });
+  await b.cycle(t, 80);
+  const n0 = ha.calls.length;
+  st["climate.office"] = { state: "heat", attributes: { temperature: 21, ...STEP1 }, context: { id: "n1", user_id: "peter", parent_id: null } };
+  t += 5000; await b.cycle(t, 80);
+  assert.ok(b.overrides.office && b.overrides.office.setpoint === 21, "held as theirs");
+  assert.strictEqual(b.decisions.get("office").state, "manual");
+  assert.deepStrictEqual(ha.calls.slice(n0), [], "not sent back to 20");
+  const { sameAsCommanded } = require("../climate/index.js");
+  assert.ok(!sameAsCommanded({ mode: "heat", setpoint: 20, step: 1 }, { mode: "heat", setpoint: 21 }), "a whole step away isn't ours");
+  assert.ok(sameAsCommanded({ mode: "heat", setpoint: 20, step: 1 }, { mode: "heat", setpoint: 20.4 }));
+});
+
+t("[RR3] brain: a setting the battery overruled is dropped; on recovery the brain plans the zone (from what it learned)", async () => {
+  const st = { "sensor.office_t": { state: "20" }, "binary_sensor.o": { state: "on" }, "climate.office": { state: "heat", attributes: { temperature: 20, ...STEP1 } } };
+  const { b, ha } = liveBrain(st);
+  let t = MON + 18 * HOUR;
+  b.actuator.obs.set("office#0", { on: true, mode: "heat", changedAt: t - HOUR });
+  b.actuator.commanded.set("climate.office", { mode: "heat", setpoint: 20, at: t - HOUR, step: 1 });
+  await b.cycle(t, 80);
+  st["climate.office"] = { state: "heat", attributes: { temperature: 24, ...STEP1 }, context: { id: "x", user_id: "peter" } };
+  t += 5000; await b.cycle(t, 80);
+  assert.strictEqual(b.decisions.get("office").state, "manual");
+  b._run = new Set(); t += 5000; await b.cycle(t, 35);
+  assert.ok(b.decisions.get("office").overruled && !b.overrides.office, "overruled: dropped");
+  const sent = ha.calls.at(-1)[3].temperature;
+  st["climate.office"] = { state: "heat", attributes: { temperature: sent, ...STEP1 }, context: { id: "y", user_id: "brain" } };
+  for (let k = 0; k < 20; k++) { t += 60000; await b.cycle(t, 80); }
+  const d = b.decisions.get("office");
+  assert.notStrictEqual(d.state, "manual", "not 'respected' while the unit sits elsewhere");
+  assert.ok(d.setpoint > 20, `comfort leans toward the person's 24 now: ${d.setpoint}`);
+  assert.strictEqual(ha.calls.at(-1)[3].temperature, fitSetpoint(d.setpoint, { step: 1 }), "and the unit is told (on its step)");
+});
+
+t("[RR4] actuator: a new want isn't stuck behind an old backoff; failed calls retry each minute; protection at least every 5 min", async () => {
+  const ha = fakeHa({}), act = new ClimateActuator({ ha });
+  const z = ac({ min_on_s: 0, min_off_s: 0 });
+  const ignoring = reading({ on: true, mode: "heat", setpoint: 25 });
+  let t = MON;
+  for (let k = 0; k < 6; k++) { await act.apply([z], dec("heat", 20), ignoring, { dryRun: false, now: t }); t += 40 * MIN; }
+  const n = ha.calls.length;
+  await act.apply([z], dec("heat", 17), ignoring, { dryRun: false, now: t + 5000 });
+  assert.strictEqual(ha.calls.length, n + 1, "a different want is sent at once");
+  const pha = fakeHa({}), pact = new ClimateActuator({ ha: pha });
+  let pt = MON;
+  for (let k = 0; k < 12 * 60; k++) { await pact.apply([z], dec("heat", 10, { level: "protect" }), ignoring, { dryRun: false, now: pt }); pt += 5000; }
+  assert.ok(pha.calls.length >= 12, `protection resent at least every 5 min over an hour: ${pha.calls.length}`);
+  let down = true;
+  const calls = [];
+  const fail = new ClimateActuator({ ha: { callService: async (...a) => { if (down) throw new Error("socket not open"); calls.push(a); return {}; } } });
+  let ft = MON;
+  for (let k = 0; k < 12 * 20; k++) { await fail.apply([z], dec("heat", 21), reading({}), { dryRun: false, now: ft }); ft += 5000; }
+  down = false;
+  let waited = 0;
+  for (let k = 0; k < 720 && !calls.length; k++) { ft += 5000; waited += 5; await fail.apply([z], dec("heat", 21), reading({}), { dryRun: false, now: ft }); }
+  assert.ok(waited <= 60, `after a 20 min outage the command lands within a minute: ${waited} s`);
+});
+
+t("[RR5] ha: no state_reported subscription; last_reported refreshed from get_states", async () => {
+  const ha = new HAClient({ token: "x" });
+  const sent = [];
+  const old = new Date(Date.now() - 4 * HOUR).toISOString(), fresh = new Date(Date.now() - 60000).toISOString();
+  let reported = old;
+  ha.send = async (m) => { sent.push(m); if (m.type === "get_states") return [{ entity_id: "sensor.t", state: "20", attributes: {}, last_updated: old, last_reported: reported }]; return {}; };
+  ha.track(["sensor.t"]);
+  await ha._afterAuth();
+  clearInterval(ha.refreshTimer);
+  assert.ok(!sent.some((m) => m.event_type === "state_reported"), "HA needs a filter for state_reported: not subscribed");
+  assert.ok(ha.entity("sensor.t").ageSec > 3.9 * 3600);
+  reported = fresh;
+  await ha.refreshReported();
+  assert.ok(ha.entity("sensor.t").ageSec < 120, "a steady sensor's report time is refreshed");
+  ha.send = async () => { throw new Error("socket not open"); };
+  await ha.refreshReported();   // logged, not thrown
+});
+
+t("[RR6] brain: a bare context (time-triggered automation, or the unit's buttons) teaches weakly and never holds", () => {
+  const st = { "sensor.office_t": { state: "18" }, "binary_sensor.o": { state: "on" }, "climate.office": { state: "heat", attributes: { temperature: 20, target_temp_step: 1 } } };
+  const { b } = liveBrain(st);
+  const t0 = MON + 18 * HOUR;
+  b.actuator.commanded.set("climate.office", { mode: "heat", setpoint: 20, at: t0 - HOUR, step: 1 });
+  b.tick(t0, { tout: 8, soc: 80 });
+  st["climate.office"] = { state: "heat", attributes: { temperature: 16, target_temp_step: 1 }, context: { id: "auto1", parent_id: null, user_id: null } };
+  b.tick(t0 + 5000, { tout: 8, soc: 80 });
+  assert.ok(!b.overrides.office, "no override hold");
+  const p = b.prefs.preferred("office", t0, "heat", 20);
+  assert.strictEqual(p.learned, 16);
+  assert.ok(p.confidence < 0.25, `weakly: ${p.confidence}`);
+  assert.strictEqual(b.classify({ mode: "heat", setpoint: 16 }, { id: "a", parent_id: "p" }, null), "automation");
+  assert.strictEqual(b.classify({ mode: "heat", setpoint: 16 }, null, null), "unknown");
+  assert.strictEqual(b.classify({ mode: "heat", setpoint: 20 }, { id: "u", user_id: "peter" }, { mode: "heat", setpoint: 20 }), "human", "a person setting what the brain had is still a person");
+});
+
+t("[RR7] projection: the load profile keeps older minutes for hours newer ones don't cover yet", () => {
+  const h = (hh, mm = 0) => at(`2026-11-02T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00`);
+  const samples = [{ t: h(9), loadKw: 2 }, { t: h(10), loadKw: 3 }, { t: h(10, 30), loadKw: 1.5, climKw: 1 }];
+  const prof = loadProfile(samples, 0, { lessClimate: true });
+  assert.strictEqual(prof(h(9, 15)), 2, "09:00 not yet covered: the old minute stands");
+  assert.strictEqual(prof(h(10, 15)), 0.5, "10:00 covered: only the new minute, less its climate");
+});
+
+t("[RR8] plan/ladder: turned off by hand keeps protection; a warm room stays off, a freezing one heats", () => {
+  const off = { mode: "off", setpoint: NaN, until: MON + 20 * HOUR };
+  const warm = basePlan({ temp: 18, override: off });
+  assert.ok(warm.levels.protect.active && !warm.levels.comfort.active && !warm.levels.setback.active);
+  const w = walk(POLICY, new Map([["office", warm]]), { ...CTX, soc: 80 }).d;
+  assert.deepStrictEqual([w.state, w.mode], ["manual", "manual"]);
+  const cold = basePlan({ temp: 5, tout: 0, override: off });
+  const c = walk(POLICY, new Map([["office", cold]]), { ...CTX, soc: 80 }).d;
+  assert.deepStrictEqual([c.state, c.mode, c.setpoint, c.level], ["running", "heat", 10, "protect"]);
+  assert.ok(c.protecting && !c.overruled, "protection, but the person's off stands afterwards");
+});
+
+t("[RR fuzz] decide: plain policies decide byte-identically to the pre-climate engine (795c427)", () => {
+  const Old = require("./fixtures/dispatch-pre-climate.js").decide;
+  let seed = 7; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const pick = (a) => a[Math.floor(rnd() * a.length)];
+  const conds = ["1", "soc > 50", "surplus > 0.5", "occ", "hour >= 8 && hour < 18", "0.5", "pv > 2", "autonomy > 1"];
+  for (let k = 0; k < 3000; k++) {
+    const devices = Array.from({ length: 5 }, (_, i) => ({ id: "d" + i, kw: Math.round(rnd() * 30) / 10, important: rnd() > 0.3 }));
+    const list = []; let rung = 0;
+    for (let i = 0; i < 10; i++) {
+      if (rnd() < 0.25) { rung = Math.min(100, rung + Math.round(rnd() * 5) * 10); list.push({ type: "charge", to: rung || 20 }); }
+      else { const e = { type: "load", dev: pick(devices).id, cond: pick(conds) }; if (rnd() < 0.2) e.gen = true; if (rnd() < 0.2) e.sp = 2; if (rnd() < 0.1) e.important = rnd() > 0.5; list.push(e); }
+    }
+    const soc = Math.round(rnd() * 1000) / 10;
+    const ctx = { ...CTX, hour: Math.floor(rnd() * 24), occ: rnd() > 0.5 ? 1 : 0, sun: 1, dark: 0, soc, pv: Math.round(rnd() * 80) / 10, autonomy: rnd() * 3 };
+    const limits = { ...LIMITS, hysteresis_pct: pick([0, 2, 5]) };
+    const running = new Set(devices.filter(() => rnd() > 0.5).map((d) => d.id));
+    const hist = rnd() > 0.5 ? Array.from({ length: 30 }, (_, i) => [MON - (30 - i) * 60000, soc]) : [];
+    const a = decide({ devices, list }, ctx, limits, running, hist);
+    assert.deepStrictEqual(a.grantedKeys, [], "no keys without hkey entries");
+    delete a.grantedKeys;
+    assert.strictEqual(JSON.stringify(a), JSON.stringify(Old({ devices, list }, ctx, limits, running, hist)), `policy ${k} differs`);
+  }
 });
 
 // ======================================================================= runner

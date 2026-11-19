@@ -10,6 +10,8 @@
 // breakable by an npm registry outage during an add-on rebuild.
 const log = require("../log.js");
 
+const REFRESH_MS = 3 * 60 * 1000;   // last_reported refresh (see refreshReported)
+
 class HAClient {
   constructor({ url, token }) {
     this.url = url || "ws://supervisor/core/websocket";
@@ -100,16 +102,11 @@ class HAClient {
         const { entity_id, new_state } = msg.event.data;
         if (this.watch.has(entity_id) && new_state) this._store(entity_id, new_state);
       }
-      // A sensor re-reporting the same value: only its last_reported moves.
-      if (msg.type === "event" && msg.event && msg.event.event_type === "state_reported") {
-        const d = msg.event.data || {}, cur = this.states.get(d.entity_id);
-        if (cur && d.new_state) this._store(d.entity_id, d.new_state);
-        else if (cur && d.last_reported) cur.reported = Date.parse(d.last_reported) || cur.reported;
-      }
     });
 
     ws.addEventListener("close", () => {
       this.ready = false;
+      if (this.refreshTimer) { clearInterval(this.refreshTimer); this.refreshTimer = null; }
       const wait = Math.min(this.backoff, 30000);
       log.warn(`HA socket closed — reconnecting in ${wait}ms`);
       this.backoff *= 2;
@@ -132,16 +129,31 @@ class HAClient {
   async _afterAuth() {
     try {
       await this.send({ type: "subscribe_events", event_type: "state_changed" });
-      this.send({ type: "subscribe_events", event_type: "state_reported" }).catch(() => {});
       this.send({ type: "auth/current_user" }).then((u) => { this.userId = (u && u.id) || null; }).catch(() => {});
       const all = await this.send({ type: "get_states" });
       for (const st of all) if (this.watch.has(st.entity_id)) this._store(st.entity_id, st);
       this.ready = true;
+      // A sensor re-reporting the same value fires no state_changed, and Home
+      // Assistant's state_reported events can't be subscribed to without a filter.
+      // So the mirror's last_reported times are refreshed from get_states every few
+      // minutes; the handshake above has just done it once (a steady sensor is fresh
+      // straight after a restart or reconnect).
+      if (this.refreshTimer) clearInterval(this.refreshTimer);
+      this.refreshTimer = setInterval(() => this.refreshReported(), REFRESH_MS);
+      if (this.refreshTimer.unref) this.refreshTimer.unref();
       const missing = [...this.watch].filter((e) => !this.states.has(e));
       log.info(`HA ready — tracking ${this.watch.size} entities, ${this.states.size} resolved`);
       if (missing.length) log.warn(`entities not found in HA (will read as unavailable): ${missing.join(", ")}`);
       this.onReady();
     } catch (e) { log.error("HA handshake failed", e.message); }
+  }
+
+  /** Re-read every mirrored entity (values and last_reported). */
+  async refreshReported() {
+    try {
+      const all = await this.send({ type: "get_states" });
+      for (const st of all) if (this.watch.has(st.entity_id)) this._store(st.entity_id, st);
+    } catch (e) { log.warn("could not refresh entity report times from Home Assistant", e.message); }
   }
 
   send(payload) {

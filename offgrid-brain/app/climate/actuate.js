@@ -21,6 +21,8 @@
 const log = require("../log.js");
 
 const BACKOFF_MS = [60e3, 120e3, 300e3, 600e3, 1800e3];
+const PROTECT_CAP_MS = 300e3;   // protection is resent at least every 5 min
+const ERROR_RETRY_MS = 60e3;    // a failed call (HA down, socket closed) is retried every minute
 
 /** A setpoint the unit will accept: its step, inside its range. */
 function fitSetpoint(sp, reading) {
@@ -63,17 +65,19 @@ class ClimateActuator {
     return s;
   }
 
-  /** Minimum run/off times. Returns the state to aim for and why it was held, if it was. */
-  _dwell(s, want, o, now) {
+  /** Minimum run/off times. Returns the state to aim for and why it was held, if it was.
+      While held, the unit keeps its own current setpoint (`actualSp`): a held heat unit
+      must not be sent the cooling side's setpoint. */
+  _dwell(s, want, o, now, actualSp = NaN) {
     const since = (now - s.changedAt) / 1000;
     // heat <-> cool goes through off.
     if (s.on && want.on && want.mode !== s.mode) want = { on: false, mode: "off", setpoint: want.setpoint, via: true };
-    if (s.on && !want.on && since < o.min_on_s) return { want: { on: true, mode: s.mode, setpoint: want.setpoint }, held: `minimum run (${Math.ceil(o.min_on_s - since)} s left)` };
+    if (s.on && !want.on && since < o.min_on_s) return { want: { on: true, mode: s.mode, setpoint: actualSp }, held: `minimum run (${Math.ceil(o.min_on_s - since)} s left)` };
     if (!s.on && want.on && since < o.min_off_s) return { want: { on: false, mode: "off", setpoint: want.setpoint }, held: `minimum off (${Math.ceil(o.min_off_s - since)} s left)` };
     return { want, held: want.via ? "changing between heat and cool: off first" : null };
   }
 
-  async _send(entity, want, reading, { dryRun, now, zone, why }, out) {
+  async _send(entity, want, reading, { dryRun, now, zone, why, level }, out) {
     const dom = entity.split(".")[0];
     const desc = dom === "climate" ? (want.on ? `${want.mode}${Number.isFinite(want.setpoint) ? ` ${want.setpoint} °C` : ""}` : "off") : want.on ? "on" : "off";
     if (dryRun) {
@@ -83,10 +87,13 @@ class ClimateActuator {
       out.push({ zone, entity, action: "dry_run", detail: desc });
       return;
     }
-    const rs = this.resend.get(entity);
+    // Backoff for a unit that doesn't follow. A different want starts afresh.
+    let rs = this.resend.get(entity);
+    if (rs && rs.desc !== desc) rs = null;
     if (rs && now < rs.next) { out.push({ zone, entity, action: "waiting", detail: `${desc}: resend in ${Math.ceil((rs.next - now) / 1000)} s` }); return; }
     const tries = rs ? rs.tries + 1 : 1;
-    this.resend.set(entity, { tries, next: now + BACKOFF_MS[Math.min(tries - 1, BACKOFF_MS.length - 1)] });
+    const wait = Math.min(BACKOFF_MS[Math.min(tries - 1, BACKOFF_MS.length - 1)], level === "protect" ? PROTECT_CAP_MS : Infinity);
+    this.resend.set(entity, { tries, desc, next: now + wait });
     try {
       if (dom === "climate") {
         if (want.on && Number.isFinite(want.setpoint)) await this.ha.callService("climate", "set_temperature", entity, { temperature: want.setpoint, hvac_mode: want.mode });
@@ -99,6 +106,9 @@ class ClimateActuator {
       log.info(`climate ${zone}: ${entity} ${desc}${tries > 1 ? ` (attempt ${tries}: the unit hadn't followed)` : ""} — ${why}`);
       out.push({ zone, entity, action: "set", detail: desc, attempt: tries });
     } catch (e) {
+      // A failure says nothing about the unit (HA down, socket closed): retry in a
+      // minute, without escalating the backoff.
+      this.resend.set(entity, { tries: tries - 1, desc, next: now + ERROR_RETRY_MS });
       log.error(`climate ${zone}: failed to set ${entity} ${desc}`, e.message);
       this.advice.set(entity, `failed to set ${desc}: ${e.message}`);
       out.push({ zone, entity, action: "error", detail: e.message });
@@ -144,12 +154,12 @@ class ClimateActuator {
           const on = heat && (T < sp - 0.2 || (actual.on && T < sp + 0.3));
           want = { on, mode: on ? "heat" : "off", setpoint: NaN };
         }
-        const { want: w, held } = this._dwell(s, want, o, now);
+        const { want: w, held } = this._dwell(s, want, o, now, reading.setpoint);
         if (held) out.push({ zone: z.id, entity: o.entity, action: "held", detail: held });
         const tol = (reading.step || 0.5) / 2 + 1e-6;
         const matches = w.on === actual.on && (!w.on || (w.mode === actual.mode && (!isClimate || !Number.isFinite(w.setpoint) || Math.abs(w.setpoint - reading.setpoint) <= tol)));
         if (matches) { this.resend.delete(o.entity); if (dryRun) this.advice.set(o.entity, "as wanted"); }
-        else await this._send(o.entity, w, reading, { dryRun, now, zone: z.id, why: d.reason }, out);
+        else await this._send(o.entity, w, reading, { dryRun, now, zone: z.id, why: d.reason, level: d.level }, out);
         callFor(o, z.id, w.on && w.mode === "heat");
       }
     }

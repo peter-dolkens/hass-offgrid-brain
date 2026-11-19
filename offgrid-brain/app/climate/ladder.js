@@ -164,11 +164,10 @@ function resolve(zones, plans, result, shadow = null) {
 
     if (!plan) { d.reason = "no plan (no readings yet)"; out.set(z.id, d); continue; }
     if (!all.length) {
-      d.reason = plan.blocked === "window" ? "window or door open: off"
-        : plan.blocked === "manual-off" ? "turned off by hand"
+      d.reason = plan.manualOff ? "turned off by hand" : plan.blocked === "window" ? "window or door open: off"
         : plan.blocked === "no-side" ? "nothing it can do (no output for the side needed)"
         : "nothing asking to run";
-      if (plan.manual && plan.blocked === "manual-off") { d.state = "manual"; d.mode = "manual"; }
+      if (plan.manualOff) { d.state = "manual"; d.mode = "manual"; }
       out.set(z.id, d); continue;
     }
     if (!best) {
@@ -180,6 +179,13 @@ function resolve(zones, plans, result, shadow = null) {
     const c = best.climate;
     Object.assign(d, { level: c.level, sp: c.sp, side: c.side, setpoint: c.setpoint });
     const widened = refusedNames.length ? `; band widened, ${refusedNames.join(", ")} shed` : "";
+    if (plan.manual && plan.manual.mode === "off") {
+      // Turned off by hand: stays off unless protection needs power (a freezing room).
+      if (c.level === "protect" && best.demandKw > 0.01) {
+        Object.assign(d, { state: "running", mode: c.side, protecting: true, reason: `turned off by hand, but protection holds ${c.setpoint} °C` });
+      } else Object.assign(d, { state: "manual", mode: "manual", reason: "turned off by hand" });
+      out.set(z.id, d); continue;
+    }
     if (plan.manual) {
       // A person's setting stands only while comfort is affordable (H6).
       if (c.sp <= 0) {

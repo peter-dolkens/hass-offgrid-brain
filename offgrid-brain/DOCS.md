@@ -386,7 +386,7 @@ Settings → **Climate zones**, one tile per zone (stored in `settings.json` und
 | Field | |
 |---|---|
 | Name, area, floor area | The zone's MQTT device takes its name and area; the floor area seeds its thermal model. |
-| Temperature sensors | One or more, averaged. A sensor counts while available and reported to Home Assistant within 3 h (its `last_reported`). |
+| Temperature sensors | One or more, averaged. A sensor counts while available and reported to Home Assistant within 3 h (its `last_reported`, re-read from Home Assistant every 3 minutes, since a sensor repeating the same value sends no change). |
 | Humidity | Optional. Above 70% the cooling setpoint drops 1 °C, until it falls below 65%. |
 | Presence | Any number of occupancy, motion or presence entities, OR'ed: the wasp-in-a-box template binary_sensors, PIRs, `person`/`device_tracker`, or a count. `unavailable`/`unknown` is **unknown**, not empty: with no known reading the zone uses its learned pattern. A zone stays occupied for **Vacancy delay** after its sensors clear. |
 | Windows and doors | Any one open for **Window delay** (60 s) turns the zone off. |
@@ -431,16 +431,26 @@ power is planned from the room alone.
 
 ### What it learns
 
-- **Preferences.** A setpoint change made by a person is learned, for the zone,
-  weekday or weekend, hour of day, and heat or cool, spread over neighbouring hours
-  and fading with a 21-day half-life; a setting people leave alone counts a little
-  each hour. Changes the brain made (it remembers every command, across restarts,
-  within one setpoint step, however late the unit echoes it), changes by its own
-  Home Assistant user, and changes by automations or scripts (a context with a
-  parent) are not learned. The comfort setpoints move from the defaults toward what
-  was learned as confidence grows. When the brain is actuating and someone changes
-  what it set, that's an **override**: learned more strongly, and left alone for
-  **Respect changes by hand** minutes, while comfort is affordable (below).
+- **Preferences.** A setpoint change is learned for the zone, weekday or weekend,
+  hour of day, and heat or cool, spread over neighbouring hours and fading with a
+  21-day half-life. Who made it decides how much it counts, from Home Assistant's
+  state context:
+  - a **person** (a user other than the brain: the UI, an app) counts fully, and a
+    setting a person leaves alone counts a little each hour;
+  - **unknown** (a context with no user and no parent: a time- or sun-triggered
+    automation, or someone at the unit's own buttons) counts at 0.3 and is never
+    held as an override;
+  - the **brain's own** changes (its service calls, its Home Assistant user, or a
+    setting within half a step of its last command, remembered across restarts) and
+    **automations** reacting to something (a context with a parent) aren't learned.
+
+  The comfort setpoints move from the defaults toward what was learned as confidence
+  grows. When the brain is actuating and a person changes what it set, that's an
+  **override**: learned more strongly (1.5×), and left alone for **Respect changes by
+  hand** minutes while comfort is affordable. If the battery can't afford it the
+  override is dropped and the brain plans the zone again (from preferences that have
+  already learned the setting); it doesn't resume a stale setting later. Turned off
+  by hand stays off, except that protection still heats a freezing room.
 - **Occupancy.** Each hour's occupied fraction, by hour of the week (28-day
   half-life), leaning on weekday/weekend patterns and then the house schedule where
   there is little data. It predicts when a room will next be occupied.
@@ -454,10 +464,16 @@ power is planned from the room alone.
   the power to reach a setpoint, how long warm-up takes, and how long a room coasts.
 - On first start each zone replays **Learn from history** days of Home Assistant
   history (its sensors, thermostats, meters and the outdoor temperature) through the
-  same learning, once, a day and an entity at a time.
+  same learning, once, a day and an entity at a time. The recorder keeps no context,
+  so setpoint changes from history count as unknown (0.3) and untouched settings
+  aren't sampled: history gives a starting point that live, attributed changes soon
+  outweigh. Occupancy and the thermal model learn from history in full.
 
 Learning lives in `/data/climate.json` (versioned). A file that can't be read is kept
-as `climate.json.corrupt` and learning starts again.
+as `climate.json.corrupt` and learning starts again. **Before going live** it can be
+deleted (stop the add-on, remove `/data/climate.json`, start it) to start learning
+afresh, e.g. if dry-run weeks included setpoints nobody would want learned; the zones
+re-seed from history on the next start.
 
 ### Comfort levels and the ladder
 
@@ -483,7 +499,8 @@ soak, then pre-conditioning, then comfort (its band widens to the setback), then
 setback, keeping protection; a room on the comfortable side of its granted setpoint
 **coasts** with the unit off, and the panel shows how long it will hold. Only when
 even protection can't be served is it **shed**. A person's setting stands only while
-comfort is granted; below that the brain enforces the granted band.
+comfort is granted; below that the brain enforces the granted band and drops the
+override.
 
 If the room temperature is lost, the zone isn't switched off: the unit's own
 thermostat is given the setback (or protection) setpoint and the zone is flagged. A
@@ -535,8 +552,9 @@ Without **Takes over load** such a device stays an ordinary switched load.
 band held, the learned occupancy, the forecast outdoor temperature, and the cost of
 recovering a room from its setback when people are due), adds the climate kW the walk
 grants to the projected load, and takes the recorded climate draw out of the last-day
-load profile so it isn't counted twice (minutes recorded before 0.34 are left out of
-the profile, since they can't be separated).
+load profile so it isn't counted twice. Minutes recorded before the climate brain was
+on can't be separated, so for each hour of the day they're used until newer minutes
+cover that hour.
 
 ### Control
 
@@ -545,7 +563,10 @@ set ("would set heat 20 °C") and calls nothing. Live, it reconciles every tick:
 climate entity's mode and setpoint (on the unit's own step, inside its min/max) and
 each valve or pump (switched around the setpoint with a little hysteresis) is compared
 with what the unit is actually doing, and anything different is sent, again after 1
-min, 2, 5, 10, then every 30 min while the unit doesn't follow or the call fails. A
+min, 2, 5, 10, then every 30 min while the unit doesn't follow (every 5 min at most
+for protection). A new want is sent at once, whatever the backoff; a failed call (Home
+Assistant unreachable) is retried every minute. While a unit is held by its minimum
+run, it keeps its own setpoint: nothing is sent. A
 shared heat source runs while any zone calls (read from its real state). Every output
 keeps its minimum run and off times, timed from when the unit was seen to change and
 remembered across restarts (a unit seen for the first time is assumed to owe one); a
