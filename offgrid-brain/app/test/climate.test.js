@@ -718,6 +718,11 @@ t("[LOW] mqtt: zone devices named for the zone, area only when set, Reason diagn
   assert.strictEqual(cfg.device.name, "Office");
   assert.strictEqual(cfg.device.via_device, "offgrid_brain");
   assert.ok(!("suggested_area" in cfg.device), "no area set: none suggested");
+  assert.ok(!("default_entity_id" in cfg), "zone entities leave the id to HA (area + device + entity)");
+  const zoneBtn = JSON.parse(last("homeassistant/button/offgrid_brain/climate_office_reset_learning/config"));
+  assert.ok(!("default_entity_id" in zoneBtn), "zone button: id composed by HA too");
+  sink.publish("sensor", "soc", 50, { name: "Battery SoC" });
+  assert.strictEqual(JSON.parse(last("homeassistant/sensor/offgrid_brain/soc/config")).default_entity_id, "sensor.offgrid_brain_soc", "brain entities keep their fixed ids");
   assert.strictEqual(JSON.parse(last("homeassistant/sensor/offgrid_brain/climate_office_reason/config")).entity_category, "diagnostic");
   const n = sent.filter(([tp]) => tp === "offgrid_brain/climate_office_reason").length;
   sink.publishClimate({ zones: [z()] });

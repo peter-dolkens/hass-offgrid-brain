@@ -112,7 +112,10 @@ class MqttSink {
     this.client.publish(`${this.prefix}/${component}/offgrid_brain/${key}/config`, JSON.stringify({
       ...cfg,
       unique_id: `offgrid_brain_${key}`,
-      default_entity_id: `${component}.offgrid_brain_${key}`,
+      // The brain's own entities keep fixed ids (a stable interface). Child devices
+      // (climate zones) leave the id to Home Assistant, which composes it from the
+      // zone's area and name, e.g. sensor.office_peter_climate_zone_target.
+      ...(device === DEVICE ? { default_entity_id: `${component}.offgrid_brain_${key}` } : {}),
       has_entity_name: true,
       state_topic: `offgrid_brain/${key}`,
       availability_topic: STATUS,
@@ -127,7 +130,7 @@ class MqttSink {
     const id = `button/${key}`;
     if (this.announced.has(id)) return;
     this.client.publish(`${this.prefix}/button/offgrid_brain/${key}/config`, JSON.stringify({
-      ...cfg, unique_id: `offgrid_brain_${key}`, default_entity_id: `button.offgrid_brain_${key}`,
+      ...cfg, unique_id: `offgrid_brain_${key}`, ...(device === DEVICE ? { default_entity_id: `button.offgrid_brain_${key}` } : {}),
       has_entity_name: true, command_topic: `${CMD}${key}`, payload_press: "PRESS", availability_topic: STATUS, device,
     }), { retain: true });
     this.announced.add(id);

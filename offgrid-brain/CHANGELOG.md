@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.34.2
+- Climate-zone entities no longer get fixed ids. Home Assistant composes them from the
+  zone's area and name (HA 2026.11 naming), e.g. `sensor.office_peter_climate_zone_target`,
+  so "Recreate entity IDs" works on zone devices. The brain's own entities keep their
+  fixed `offgrid_brain_*` ids. No zones existed before, so nothing is renamed.
+
 ## 0.34.1
 - **Reset climate learning** (for moving in). Settings → Climate brain: reset learning
   forgets, for all zones or one, any of the preferred setpoints, occupancy pattern,

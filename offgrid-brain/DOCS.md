@@ -612,7 +612,7 @@ one), a child (`via_device`) of the Off-Grid Brain device: Temperature, Target, 
 Comfort level, Band low, Band high, Occupied, Occupancy likelihood, Planned power,
 diagnostics Reason (published when it changes), Model confidence, Preference
 confidence, Unit problem and Learning since, and a **Reset learning** button. The
-brain's own device has **Reset climate learning** (all zones). Entity ids are `sensor.offgrid_brain_climate_<zone>_<key>`.
+brain's own device has **Reset climate learning** (all zones). Entity ids are composed by Home Assistant from the zone's area and name (for example `sensor.office_peter_climate_zone_target` for a zone named "Climate zone" in Office (Peter)); the brain's own entities keep their fixed `offgrid_brain_*` ids.
 A renamed zone is announced again; a removed zone's entities are removed, even if it
 was removed while the brain was stopped.
 
