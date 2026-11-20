@@ -305,9 +305,27 @@ async function main() {
       runTick();
     },
     listEntities: () => ha.listEntities(),
+    resetClimate: (b) => resetClimate({ zone: b.zone || null, parts: b.parts || "all",
+      reseedSince: b.reseed_since ? Date.parse(b.reseed_since) : null }, "the web panel"),
     getTimeline: timeline,
     getHistory: (days) => hourLog.read(days),
   });
+
+  /** Forget climate learning (from the panel, or a button in Home Assistant). */
+  function resetClimate(opts, from) {
+    if (opts.reseedSince != null && !Number.isFinite(opts.reseedSince)) throw new Error("re-seed date isn't a date");
+    const r = climate.reset(opts);
+    log.info(`climate learning reset from ${from}: ${r.parts.join(", ")} for ${r.zones.join(", ")}`);
+    saveClimate(climate);
+    if (opts.reseedSince != null) climate.seed().catch((e) => log.warn("climate: history seed failed", e.message));
+    return r;
+  }
+  mqttSink.onCommand = (cmd, payload) => {
+    if (payload !== "PRESS") return;
+    if (cmd === "climate_reset_learning") resetClimate({ parts: "all" }, "Home Assistant (all zones)");
+    const m = /^climate_([a-z0-9_]+)_reset_learning$/.exec(cmd);
+    if (m) resetClimate({ zone: m[1], parts: "all" }, `Home Assistant (${m[1]})`);
+  };
 
   // ---- tick ----------------------------------------------------------------
   let ticking = false;

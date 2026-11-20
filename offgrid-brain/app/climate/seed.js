@@ -83,10 +83,10 @@ function replay(brain, zones, hist, { start, end, toutEntity }) {
 }
 
 /** Fetch and replay, a day at a time. */
-async function seedFromHistory(brain, zones, { start, end, toutEntity }) {
+async function seedFromHistory(brain, zones, { start, end, toutEntity, parts = null }) {
   const { newCtx } = require("./index.js");
   const ids = [...new Set([...zones.flatMap(Zones.zoneEntities), toutEntity, brain.cfg.presence_entity].filter(Boolean))];
-  const ctx = newCtx(), cur = new Map();
+  const ctx = newCtx(parts), cur = new Map();
   let n = 0;
   for (let d = start; d < end; d += DAY) {
     const dayEnd = Math.min(end, d + DAY), hist = new Map();

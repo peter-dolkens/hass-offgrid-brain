@@ -977,6 +977,123 @@ t("[RR fuzz] decide: plain policies decide byte-identically to the pre-climate e
   }
 });
 
+// ======================================================================= reset (0.34.1)
+
+function learnedBrain(ha = fakeHa({ "sensor.office_t": { state: "19" }, "sensor.den_t": { state: "19" } })) {
+  const b = new ClimateBrain({ ha });
+  const mk = (id) => ({ id, name: id, temp_entities: [`sensor.${id}_t`], presence_entities: [`binary_sensor.${id}_o`],
+    outputs: [{ kind: "ac", entity: `climate.${id}`, kw: 1.5, power_entity: `sensor.${id}_p` }] });
+  b.configure({ enabled: true, zones: [mk("office"), mk("den")] });
+  for (const id of ["office", "den"]) {
+    b.prefs.observe(id, MON + 19 * HOUR, "heat", 22);
+    for (let w = 1; w <= 3; w++) b.occ.addHour(id, MON - w * 7 * DAY + 19 * HOUR, 1);
+    for (const x of simulateRoom({ days: 2 })) b.models.get(id).update(x);
+    for (let k = 0; k < 30; k++) b.curves.observe(`climate.${id}`, "heat", 10, 0.9, MON + k * MIN);
+    b.baselines[`sensor.${id}_p`] = 0.1;
+    b.seeded[id] = true;
+    b.since[id] = { prefs: MON, occ: MON, model: MON, curves: MON };   // learning began on MON (the clock is real)
+  }
+  b.actuator.commanded.set("climate.office", { mode: "heat", setpoint: 20, at: MON, step: 0.5 });
+  b.actuator.obs.set("office#0", { on: true, mode: "heat", changedAt: MON });
+  return b;
+}
+const hasPrefs = (b, id) => b.prefs.preferred(id, MON + 19 * HOUR, "heat", 20).learned != null;
+const hasOcc = (b, id) => b.occ.probability(id, MON + 19 * HOUR, 0.2).p > 0.5;
+const fitted = (b, id) => b.models.get(id).n.passive + b.models.get(id).n.heat > 0;
+const hasCurve = (b, id) => b.curves.predict(`climate.${id}`, "heat", 10, 1.5).learned != null;
+
+t("[reset] preferences only, one zone: everything else, and the other zone, untouched", () => {
+  const b = learnedBrain();
+  const r = b.reset({ zone: "office", parts: ["prefs"], now: MON + DAY });
+  assert.deepStrictEqual(r, { zones: ["office"], parts: ["prefs"] });
+  assert.ok(!hasPrefs(b, "office") && hasPrefs(b, "den"));
+  assert.ok(hasOcc(b, "office") && fitted(b, "office") && hasCurve(b, "office"));
+  assert.strictEqual(b.learningSince("office").prefs, MON + DAY);
+  assert.notStrictEqual(b.learningSince("office").occ, MON + DAY);
+  assert.strictEqual(b.learningSince("office").all, MON + DAY);
+});
+
+t("[reset] everything, all zones: model back to the prior; settings and hardware state kept; no auto re-seed", () => {
+  const b = learnedBrain();
+  b.reset({ parts: "all", now: MON + DAY });
+  for (const id of ["office", "den"]) {
+    assert.ok(!hasPrefs(b, id) && !hasOcc(b, id) && !fitted(b, id) && !hasCurve(b, id), id);
+    assert.strictEqual(b.models.get(id).forPlanning("heat").source, "prior");
+    assert.ok(b.seeded[id], "history isn't re-learned on its own");
+    assert.strictEqual(b.learningSince(id).all, MON + DAY);
+  }
+  assert.deepStrictEqual(b.baselines, {});
+  assert.strictEqual(b.zones.length, 2, "zone settings kept");
+  assert.strictEqual(b.actuator.commanded.get("climate.office").setpoint, 20, "command memory kept");
+  assert.ok(b.actuator.obs.has("office#0"), "dwell state kept");
+  assert.throws(() => b.reset({ zone: "attic" }), /no climate zone/);
+  assert.throws(() => b.reset({ parts: ["nonsense"] }), /nothing to reset/);
+});
+
+t("[reset] survives a restart: still reset, dates kept, re-seed request kept", () => {
+  const b = learnedBrain();
+  b.reset({ zone: "den", parts: ["occ", "model"], reseedSince: MON + 2 * DAY, now: MON + 3 * DAY });
+  const b2 = new ClimateBrain({ ha: b.ha, state: JSON.parse(JSON.stringify(b.toJSON())) });
+  b2.configure(b.cfg);
+  assert.ok(!hasOcc(b2, "den") && !fitted(b2, "den") && hasPrefs(b2, "den") && hasCurve(b2, "den"));
+  assert.ok(hasOcc(b2, "office") && fitted(b2, "office"));
+  assert.strictEqual(b2.learningSince("den").occ, MON + 3 * DAY);
+  assert.deepStrictEqual(b2.reseed.den, { since: MON + 2 * DAY, parts: ["occ", "model"] });
+  assert.ok(!b2.seeded.den, "will re-learn from history");
+});
+
+t("[reset] re-seed from a date learns only the reset parts, from that date", async () => {
+  const s = (iso, state, a) => ({ s: state, ...(a ? { a } : {}), lu: at(iso) / 1000 });
+  const rows = {
+    "binary_sensor.office_o": [s("2026-11-01T06:00:00", "off"), s("2026-11-01T19:00:00", "on"), s("2026-11-01T22:00:00", "off"),
+      s("2026-11-09T06:00:00", "off"), s("2026-11-09T07:00:00", "on"), s("2026-11-09T09:00:00", "off")],
+    "climate.office": [s("2026-11-09T06:00:00", "off", {}), s("2026-11-09T07:00:00", "heat", { temperature: 25 })],
+    "sensor.office_t": [s("2026-11-01T06:00:00", "19")],
+  };
+  const requests = [];
+  const ha = fakeHa({}, { ready: true, send: async (m) => { requests.push(m); const id = m.entity_ids[0];
+    return { [id]: (rows[id] || []).filter((r) => r.lu * 1000 >= Date.parse(m.start_time) && r.lu * 1000 < Date.parse(m.end_time)) }; } });
+  const b = learnedBrain(ha);
+  b.reset({ zone: "office", parts: ["occ"], reseedSince: at("2026-11-09T00:00:00"), now: at("2026-11-10T00:00:00") });
+  await b.seed(at("2026-11-10T00:00:00"));
+  assert.ok(requests.every((m) => Date.parse(m.start_time) >= at("2026-11-09T00:00:00")), "nothing from before the date");
+  assert.ok(b.occ.probability("office", at("2026-11-16T07:00:00")).p > 0.5, "occupancy re-learned since the date");
+  assert.ok(!(b.occ.probability("office", at("2026-11-08T19:00:00")).p > 0.5), "the old evenings aren't");
+  assert.strictEqual(b.prefs.preferred("office", at("2026-11-16T07:00:00"), "heat", 20).learned, null, "preferences weren't reset, so not re-learned");
+  assert.ok(b.seeded.office && !b.reseed.office);
+});
+
+t("[reset] web API needs confirmation; MQTT buttons reset all zones or one", async () => {
+  const { startServer } = require("../web/server.js");
+  const calls = [];
+  const server = startServer({ port: 0, allowAny: true, getState: () => ({}), getPolicy: () => ({}), check: () => [], preview: () => null, apply: () => {},
+    getSettings: () => ({}), checkSettings: () => [], applySettings: () => {}, listEntities: async () => [],
+    resetClimate: (b) => { calls.push(b); if (b.zone === "attic") throw new Error('no climate zone "attic"'); return { zones: ["office"], parts: ["prefs"] }; } });
+  await new Promise((r) => server.once("listening", r));
+  const url = `http://127.0.0.1:${server.address().port}/api/climate/reset`;
+  const post = (body) => fetch(url, { method: "POST", body: JSON.stringify(body) });
+  assert.strictEqual((await post({ zone: "office" })).status, 409, "no confirmation");
+  assert.strictEqual(calls.length, 0);
+  const ok = await post({ zone: "office", parts: ["prefs"], confirm: "RESET" });
+  assert.strictEqual(ok.status, 200);
+  assert.deepStrictEqual((await ok.json()).zones, ["office"]);
+  assert.strictEqual((await post({ zone: "attic", confirm: "RESET" })).status, 422);
+  server.close();
+
+  const sent = [];
+  const sink = new MqttSink({ enabled: true });
+  sink.client = { connected: true, publish: (topic, payload) => sent.push([topic, payload]) };
+  sink.publishClimate({ enabled: true, zones: [{ id: "office", name: "Office", area: "Office", plan: {}, decision: {}, flags: [], learningSince: { all: MON } }] });
+  const all = JSON.parse(sent.find(([tp]) => tp === "homeassistant/button/offgrid_brain/climate_reset_learning/config")[1]);
+  assert.deepStrictEqual([all.name, all.entity_category, all.command_topic, all.device.identifiers[0]], ["Reset climate learning", "config", "offgrid_brain/cmd/climate_reset_learning", "offgrid_brain"]);
+  assert.ok(!("state_topic" in all));
+  const one = JSON.parse(sent.find(([tp]) => tp === "homeassistant/button/offgrid_brain/climate_office_reset_learning/config")[1]);
+  assert.strictEqual(one.device.identifiers[0], "offgrid_brain_climate_office");
+  const since = sent.find(([tp]) => tp === "offgrid_brain/climate_office_learning_since");
+  assert.strictEqual(since[1], new Date(MON).toISOString());
+  assert.strictEqual(JSON.parse(sent.find(([tp]) => tp === "homeassistant/sensor/offgrid_brain/climate_office_learning_since/config")[1]).device_class, "timestamp");
+});
+
 // ======================================================================= runner
 (async () => {
   console.log("climate:");

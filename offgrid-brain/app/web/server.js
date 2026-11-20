@@ -17,7 +17,9 @@
      POST /api/settings/check validate candidate settings
      PUT  /api/settings       validate, save to settings.json, and apply immediately;
                               turning dry run OFF also needs { confirm: "LIVE" }
-     GET  /api/entities       every HA entity, for the settings pickers */
+     GET  /api/entities       every HA entity, for the settings pickers
+     POST /api/climate/reset  forget climate learning: { zone?, parts?, reseed_since?,
+                              confirm: "RESET" } (zone settings and hardware state kept) */
 "use strict";
 const http = require("http");
 const fs = require("fs");
@@ -134,6 +136,14 @@ function startServer(o) {
           }
           o.applySettings(candidate);
           return send(res, 200, { ok: true });
+        }
+        case "POST /api/climate/reset": {
+          const body = await readJson(req);
+          // Forgetting weeks of learning must be asked for explicitly.
+          if (!body || body.confirm !== "RESET") return send(res, 409, { problems: ["resetting climate learning needs confirmation"] });
+          if (!o.resetClimate) return send(res, 404, { error: "not available" });
+          try { return send(res, 200, { ok: true, ...o.resetClimate(body) }); }
+          catch (e) { return send(res, 422, { problems: [e.message] }); }
         }
         case "GET /api/entities":
           return send(res, 200, { entities: await o.listEntities() });

@@ -22,6 +22,8 @@ const DEVICE = {
   model: "Dispatch controller",
 };
 const STATUS = "offgrid_brain/status";
+// Buttons in Home Assistant press by publishing here; main.js handles them (onCommand).
+const CMD = "offgrid_brain/cmd/";
 
 /* Entities from earlier versions, removed from HA on connect by publishing an
    empty retained discovery config. 0.6.0 published one combined solar total. */
@@ -89,6 +91,7 @@ class MqttSink {
       log.info("MQTT connected");
       this.announced.clear();   // re-announce after a reconnect (the broker may have restarted)
       this.client.publish(STATUS, "online", { retain: true });
+      this.client.subscribe(`${CMD}#`);
       for (const id of RETIRED) {
         const [component, key] = id.split("/");
         this.client.publish(`${this.prefix}/${component}/offgrid_brain/${key}/config`, "", { retain: true });
@@ -96,6 +99,11 @@ class MqttSink {
       }
     });
     this.client.on("error", (e) => log.warn("MQTT error", e.message));
+    this.client.on("message", (topic, payload) => {
+      if (!topic.startsWith(CMD) || !this.onCommand) return;
+      try { this.onCommand(topic.slice(CMD.length), String(payload)); }
+      catch (e) { log.warn(`MQTT command ${topic} failed`, e.message); }
+    });
   }
 
   _announce(component, key, cfg, device = DEVICE) {
@@ -109,6 +117,18 @@ class MqttSink {
       state_topic: `offgrid_brain/${key}`,
       availability_topic: STATUS,
       device,
+    }), { retain: true });
+    this.announced.add(id);
+  }
+
+  /** A button: pressing it in Home Assistant publishes PRESS to offgrid_brain/cmd/<key>. */
+  publishButton(key, cfg, device = DEVICE) {
+    if (!this.enabled || !this.client || !this.client.connected) return;
+    const id = `button/${key}`;
+    if (this.announced.has(id)) return;
+    this.client.publish(`${this.prefix}/button/offgrid_brain/${key}/config`, JSON.stringify({
+      ...cfg, unique_id: `offgrid_brain_${key}`, default_entity_id: `button.offgrid_brain_${key}`,
+      has_entity_name: true, command_topic: `${CMD}${key}`, payload_press: "PRESS", availability_topic: STATUS, device,
     }), { retain: true });
     this.announced.add(id);
   }
@@ -141,6 +161,15 @@ class MqttSink {
     this.zoneSig = this.zoneSig || {};
     this.lastText = this.lastText || new Map();
     const live = new Set();
+    // Reset all climate learning, from Home Assistant or an automation.
+    if (snap.enabled) {
+      this.publishButton("climate_reset_learning", { name: "Reset climate learning", icon: "mdi:restore", entity_category: "config" });
+      this.climateButton = true;
+    } else if (this.climateButton) {
+      this.client.publish(`${this.prefix}/button/offgrid_brain/climate_reset_learning/config`, "", { retain: true });
+      this.announced.delete("button/climate_reset_learning");
+      this.climateButton = false;
+    }
     for (const z of snap.zones || []) {
       live.add(z.id);
       const keys = this.zoneKeys.get(z.id) || new Set();
@@ -179,6 +208,10 @@ class MqttSink {
         { name: "Preference confidence", unit_of_measurement: "%", state_class: "measurement", icon: "mdi:account-check", entity_category: "diagnostic" });
       pub("sensor", "planned_power", num((d.kw || 0) * 1000, 0), { name: "Planned power", unit_of_measurement: "W", device_class: "power", state_class: "measurement" });
       pub("binary_sensor", "unit_problem", (z.flags || []).length ? "ON" : "OFF", { name: "Unit problem", device_class: "problem", entity_category: "diagnostic" });
+      const since = z.learningSince && Number.isFinite(z.learningSince.all) ? new Date(z.learningSince.all).toISOString() : "None";
+      pub("sensor", "learning_since", since, { name: "Learning since", device_class: "timestamp", entity_category: "diagnostic", icon: "mdi:school-outline" });
+      keys.add(`button/climate_${z.id}_reset_learning`);
+      this.publishButton(`climate_${z.id}_reset_learning`, { name: "Reset learning", icon: "mdi:restore", entity_category: "config" }, device);
     }
     // Zones that were removed: drop their entities from Home Assistant.
     for (const [id, keys] of this.zoneKeys) {

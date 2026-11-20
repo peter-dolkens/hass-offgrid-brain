@@ -349,6 +349,26 @@
       </div>
       <ul class="problems" id="zproblems" hidden></ul>
     </div>
+    <div class="card">
+      <h2>Climate brain: reset learning <span class="muted">Forget what was learned, e.g. on moving in. Zone settings and what the units are doing are kept. History isn't re-learned unless you give a date.</span></h2>
+      <div class="form">
+        <label for="rst-zone">Zones</label><select id="rst-zone"></select>
+        <label>What to forget</label>
+        <div class="vars" style="padding:0">
+          <label><input type="checkbox" data-part="prefs" checked> preferred setpoints</label>
+          <label><input type="checkbox" data-part="occ" checked> occupancy pattern</label>
+          <label><input type="checkbox" data-part="model" checked> thermal model</label>
+          <label><input type="checkbox" data-part="curves" checked> consumption curves</label>
+        </div>
+        <label for="rst-since">Re-learn from history since</label><input type="date" id="rst-since">
+        <div class="help">Optional. Leave empty to start learning from now (the recorder's older history is from before).</div>
+      </div>
+      <div class="actions">
+        <button class="btn" id="btn-climate-reset">Reset learning…</button>
+        <span class="spacer"></span><span id="rstatus" class="muted"></span>
+      </div>
+      <ul class="problems" id="rproblems" hidden></ul>
+    </div>
     <datalist id="dl-humidity"></datalist><datalist id="dl-presence"></datalist><datalist id="dl-contact"></datalist>
     <datalist id="dl-climate"></datalist><datalist id="dl-hydronic"></datalist><datalist id="dl-weather"></datalist>
     <datalist id="dl-soc"></datalist><datalist id="dl-power"></datalist><datalist id="dl-temperature"></datalist>
@@ -439,6 +459,7 @@ function renderClimate(c) {
         <span>Comfort</span><span>${p.comfort ? `${fmt(p.comfort.heat)}–${fmt(p.comfort.cool)} °C · learned ${pct(p.comfort.confidence)}${p.comfort.humid ? " · humid" : ""}` : "—"}</span>
         <span>Occupancy</span><span>${occ} · ${pct(p.occProb)} usual now${next}${z.presence == null ? " · no presence reading" : ""}</span>
         <span>Model</span><span>${z.model ? `τ ${fmt(z.model.tauH, 0)} h · ${pct(z.model.confidence)} confident · planning with the ${esc(z.model.planningWith)}` : "—"}${p.leadMin ? ` · warm-up lead ${p.leadMin} min` : ""}</span>
+        <span>Learning</span><span>${z.learningSince && z.learningSince.all ? `since ${new Date(z.learningSince.all).toLocaleString()}` : "—"}${z.seeded ? "" : " · history not used"}</span>
         <span>Planned</span><span>${z.advisory ? `${watts(d.shadowKw || 0)} if it had outputs (advisory: no real budget)` : watts(d.kw || 0)}${p.cap ? ` of ${watts(Math.max(p.cap.heat || 0, p.cap.cool || 0))}` : ""}${z.adviseOnly ? " · advice only" : ""}</span>
         ${outs ? `<span>Outputs</span><span>${outs}</span>` : ""}
       </div>
@@ -1506,6 +1527,7 @@ function loadTiles() {
   renderInverters();
   zoneModel = JSON.parse(JSON.stringify((settingsSaved.climate && settingsSaved.climate.zones) || []));
   renderZones();
+  renderResetZones();
   for (const el of ["bstatus", "istatus", "zstatus"]) $(el).textContent = "";
   showList($("zproblems"), []);
   showList($("bproblems"), []); showList($("iproblems"), []);
@@ -1569,6 +1591,27 @@ function renderZones() {
   for (const b of document.querySelectorAll("[data-oadd]")) b.onclick = () => { const z = zoneModel[Number(b.dataset.oadd)]; z.outputs = [...(z.outputs || []), { kind: "ac", entity: "", kw: 1.5, modes: ["heat", "cool"] }]; renderZones(); };
   for (const b of document.querySelectorAll("[data-odel]")) b.onclick = () => { const z = zoneModel[Number(b.closest("[data-z]").dataset.z)]; z.outputs.splice(Number(b.dataset.odel), 1); renderZones(); };
   $("zone-add-tile").onclick = addZone;
+}
+
+function renderResetZones() {
+  const zs = (settingsSaved && settingsSaved.climate && settingsSaved.climate.zones) || [];
+  $("rst-zone").innerHTML = `<option value="">all zones</option>` + zs.map((z) => `<option value="${esc(z.id)}">${esc(z.name || z.id)}</option>`).join("");
+}
+
+async function resetClimate() {
+  const zone = $("rst-zone").value || null;
+  const parts = [...document.querySelectorAll("[data-part]")].filter((c) => c.checked).map((c) => c.dataset.part);
+  const since = $("rst-since").value;
+  if (!parts.length) { showList($("rproblems"), ["Pick something to forget."]); return; }
+  const what = `${parts.join(", ")} for ${zone ? $("rst-zone").selectedOptions[0].textContent : "all zones"}`;
+  if (!confirm(`Forget ${what}?\n\nThis can't be undone.${since ? ` It will re-learn from history since ${since}.` : " It starts learning from now."}`)) return;
+  const r = await fetch("api/climate/reset", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ zone, parts, reseed_since: since ? new Date(`${since}T00:00:00`).toISOString() : null, confirm: "RESET" }) });
+  const out = await r.json();
+  if (!r.ok) { showList($("rproblems"), out.problems || [out.error]); $("rstatus").textContent = "Not reset."; return; }
+  showList($("rproblems"), []);
+  $("rstatus").textContent = `Reset ${out.parts.join(", ")} for ${out.zones.join(", ")}.`;
+  setTimeout(refresh, 800);
 }
 
 function addZone() {
@@ -1678,6 +1721,7 @@ $("btn-inv-save").onclick = saveInverters;
 $("btn-batt-save").onclick = saveBattery;
 $("btn-zone-add").onclick = addZone;
 $("btn-zone-save").onclick = saveZones;
+$("btn-climate-reset").onclick = resetClimate;
 
 // ---------- tabs ----------
 for (const b of document.querySelectorAll("nav button")) {

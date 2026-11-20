@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.34.1
+- **Reset climate learning** (for moving in). Settings → Climate brain: reset learning
+  forgets, for all zones or one, any of the preferred setpoints, occupancy pattern,
+  thermal model (back to the floor-area prior) and consumption curves, with a
+  confirmation. Zone settings, and the units' minimum-run timing and command memory,
+  are kept. It doesn't re-learn from history (that's the old house) unless you give a
+  date: "re-learn from history since" re-learns just the reset parts from then.
+- Buttons in Home Assistant: **Reset climate learning** on the brain's device (all
+  zones) and **Reset learning** on each zone's device, for the UI or automations.
+- **Learning since** per zone: on Live and as a diagnostic timestamp entity, so the
+  learning's maturity is visible. Kept in `/data/climate.json` across restarts.
+
 ## 0.34.0
 - **Climate brain.** Heating and cooling planned per zone and offered to the dispatch
   list as comfort levels (protect, setback, comfort, precondition, soak) with

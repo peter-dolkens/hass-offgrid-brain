@@ -475,6 +475,36 @@ deleted (stop the add-on, remove `/data/climate.json`, start it) to start learni
 afresh, e.g. if dry-run weeks included setpoints nobody would want learned; the zones
 re-seed from history on the next start.
 
+### Resetting what it learned
+
+Settings → **Climate brain: reset learning** forgets learning for **all zones or one**,
+and for any of: **preferred setpoints**, the **occupancy pattern**, the **thermal
+model** (back to the floor-area prior; planning uses the prior until the new fit is
+confident) and the **consumption curves** (with the meters' learned baselines). It
+asks for confirmation. Zone settings are kept, and so is what the brain knows about
+the units themselves (their minimum-run timing and the commands it sent), since that
+describes the hardware, not the household.
+
+A reset doesn't re-learn from Home Assistant's history: after a move that history is
+the old life. **Re-learn from history since** (a date, empty by default) re-learns the
+reset parts from that date on, e.g. a reset on move-in day, then a week later a
+re-seed from move-in day once the recorder holds the new house's history.
+
+Each zone shows **Learning since** on Live (the newest reset among its parts, or when
+the zone was first set up), and as a diagnostic entity, so you can tell how mature
+its learning is.
+
+The same reset is a button in Home Assistant: **Reset climate learning** on the
+Off-Grid Brain device (all zones, everything) and **Reset learning** on each zone's
+device (that zone, everything), for the UI or an automation. Neither re-learns from
+history.
+
+**Moving in.** Live in dry run until the house is lived in. On move-in day press
+**Reset climate learning** (or reset from Settings). The brain then learns the new
+household from scratch; optionally, once a week or two has been recorded, reset again
+with **Re-learn from history since** set to move-in day, to fold in what the recorder
+saw before the brain had caught up.
+
 ### Comfort levels and the ladder
 
 Each tick a zone picks its side (heat or cool: from the room against its band, else
@@ -579,9 +609,10 @@ when they go back to the policy as written.
 
 Each zone is its own device, named for the zone and placed in its area (if it has
 one), a child (`via_device`) of the Off-Grid Brain device: Temperature, Target, Mode,
-Comfort level, Band low, Band high, Occupied, Occupancy likelihood, Planned power, and
+Comfort level, Band low, Band high, Occupied, Occupancy likelihood, Planned power,
 diagnostics Reason (published when it changes), Model confidence, Preference
-confidence and Unit problem. Entity ids are `sensor.offgrid_brain_climate_<zone>_<key>`.
+confidence, Unit problem and Learning since, and a **Reset learning** button. The
+brain's own device has **Reset climate learning** (all zones). Entity ids are `sensor.offgrid_brain_climate_<zone>_<key>`.
 A renamed zone is announced again; a removed zone's entities are removed, even if it
 was removed while the brain was stopped.
 

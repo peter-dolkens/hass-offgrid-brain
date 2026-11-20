@@ -36,7 +36,10 @@ const obj = (x) => (x && typeof x === "object" && !Array.isArray(x) ? x : {});
 
 /** A learning context: what was last seen, partial windows. Live ticks and the
     history replay each have their own, so seeding can't confuse the live view. */
-const newCtx = () => ({ seen: new Map(), acc: new Map(), presentAt: new Map(), openSince: new Map(),
+/** The parts of what's learned that a reset can clear, each independently. */
+const PARTS = ["prefs", "occ", "model", "curves"];
+
+const newCtx = (parts = null) => ({ parts: parts ? new Set(parts) : null, seen: new Map(), acc: new Map(), presentAt: new Map(), openSince: new Map(),
   holdSampleAt: new Map(), curveAt: new Map(), energy: new Map(), quiet: new Map(), loud: new Map(), lag: new Map() });
 
 /** Is this setting the brain's own command? Commands are sent on the unit's step, so
@@ -65,6 +68,12 @@ class ClimateBrain {
     this.modelState = obj(state.models);
     this.models = new Map();
     this.seeded = obj(state.seeded);
+    // When each zone's learning (per part) started: first configured, or last reset.
+    this.since = Object.fromEntries(Object.entries(obj(state.since)).map(([id, v]) =>
+      [id, Object.fromEntries(Object.entries(obj(v)).filter(([p, t]) => PARTS.includes(p) && Number.isFinite(t)))]));
+    // A reset may ask to re-learn from history since a date: { zone: { since, parts } }.
+    this.reseed = Object.fromEntries(Object.entries(obj(state.reseed)).filter(([, v]) => v && Number.isFinite(v.since)
+      && Array.isArray(v.parts) && v.parts.every((p) => PARTS.includes(p))));
     this.overrides = obj(state.overrides);
     this.latch = obj(state.latch);
     this.baselines = obj(state.baselines);
@@ -94,6 +103,7 @@ class ClimateBrain {
     this.zones = this.cfg.enabled ? this.cfg.zones : [];
     this.toutEntity = toutEntity;
     for (const z of this.zones) {
+      if (!this.since[z.id]) this.since[z.id] = Object.fromEntries(PARTS.map((p) => [p, Date.now()]));
       const m = this.models.get(z.id);
       if (!m || m.area_m2 !== z.area_m2) {
         this.models.set(z.id, new ThermalModel({ area_m2: z.area_m2, state: m ? m.toJSON() : this.modelState[z.id] }));
@@ -103,7 +113,7 @@ class ClimateBrain {
     if (this.cfg.enabled) {
       const ids = new Set(this.cfg.zones.map((z) => z.id));
       for (const store of [this.prefs, this.occ]) for (const id of Object.keys(store.z)) if (!ids.has(id)) store.forget(id);
-      for (const map of [this.modelState, this.seeded, this.overrides, this.latch]) for (const id of Object.keys(map)) if (!ids.has(id)) delete map[id];
+      for (const map of [this.modelState, this.seeded, this.overrides, this.latch, this.since, this.reseed]) for (const id of Object.keys(map)) if (!ids.has(id)) delete map[id];
       for (const id of [...this.models.keys()]) if (!ids.has(id)) this.models.delete(id);
       const outs = this.cfg.zones.flatMap((z) => z.outputs.map((o, i) => ({ key: `${z.id}#${i}`, o })));
       this.curves.retain(outs.map((x) => x.o.entity));
@@ -195,7 +205,8 @@ class ClimateBrain {
     const cfg = this.cfg;
     // Occupancy history: only from real presence readings (unknown is not counted),
     // and not while the house is away (a holiday isn't the weekly pattern).
-    if (z.presence_entities.length && !away) this.occ.observe(z.id, now, r.presence);
+    const learns = (part) => !ctx.parts || ctx.parts.has(part);
+    if (z.presence_entities.length && !away && learns("occ")) this.occ.observe(z.id, now, r.presence);
     if (r.presence === true) ctx.presentAt.set(z.id, now);
 
     // Windows: blocked once open for the delay.
@@ -217,7 +228,7 @@ class ClimateBrain {
         if (changed) {
           // History replay has no context: its changes are at best "unknown".
           const who = this.classify(cur, live ? out.context : null, cmd, step);
-          if (WEIGHT[who]) this._learnSetpoint(z.id, now, cur, WEIGHT[who] * (who === "human" && cmd ? 1.5 : 1));
+          if (WEIGHT[who] && learns("prefs")) this._learnSetpoint(z.id, now, cur, WEIGHT[who] * (who === "human" && cmd ? 1.5 : 1));
           if (who === "human") {
             if (live && cmd && cfg.override_hold_min > 0) {
               this.overrides[z.id] = { mode: cur.mode, setpoint: cur.setpoint, until: now + cfg.override_hold_min * MIN, at: now };
@@ -244,7 +255,7 @@ class ClimateBrain {
       const side = out.coolKw > 0 ? "cool" : out.heatKw > 0 ? "heat" : null;
       if (!side) continue;
       const set = Number.isFinite(out.setpoint) ? out.setpoint : side === "cool" ? (z.cool_c ?? cfg.cool_c) : (z.heat_c ?? cfg.heat_c);
-      if (this.curves.observe(o.entity, side, side === "cool" ? tout - set : set - tout, out.meteredKw, now)) ctx.curveAt.set(o.entity, now);
+      if (learns("curves") && this.curves.observe(o.entity, side, side === "cool" ? tout - set : set - tout, out.meteredKw, now)) ctx.curveAt.set(o.entity, now);
     }
 
     // Lagged heat (slab / radiators): heating power smoothed over ~2 h.
@@ -262,7 +273,7 @@ class ClimateBrain {
     if (Number.isFinite(tout)) { a.tout += tout; a.ph += r.heatKw; a.pc += r.coolKw; a.irr += Number.isFinite(irradiance) ? irradiance : 0; a.lag += lag; a.n++; } else a.dirty = true;
     if (r.windowOpen || !Number.isFinite(r.temp) || r.tempIds !== a.ids) a.dirty = true;
     if (now - a.start >= WINDOW_MS) {
-      if (!a.dirty && a.n && model) {
+      if (!a.dirty && a.n && model && learns("model")) {
         model.update({ t0: a.t0, t1: r.temp, tout: a.tout / a.n, ph: a.ph / a.n, pc: a.pc / a.n, irr: a.irr / a.n, plag: a.lag / a.n, hours: (now - a.start) / HOUR });
       }
       ctx.acc.set(z.id, { start: now, t0: r.temp, ids: r.tempIds, tout: 0, ph: 0, pc: 0, irr: 0, lag: 0, n: 0, dirty: false });
@@ -523,11 +534,65 @@ class ClimateBrain {
     this.seeding = true;
     try {
       const { seedFromHistory } = require("./seed.js");
-      const n = await seedFromHistory(this, todo, { start: now - this.cfg.learn_days * 24 * HOUR, end: now, toutEntity: this.toutEntity });
-      for (const z of todo) this.seeded[z.id] = true;
-      log.info(`climate: learned from up to ${this.cfg.learn_days} days of history for ${todo.map((z) => z.id).join(", ")} (${n} states)`);
+      // New zones learn from the last learn_days, every part; zones reset with a
+      // re-seed date learn only their reset parts, from that date.
+      const groups = new Map();
+      for (const z of todo) {
+        const r = this.reseed[z.id];
+        const start = r ? Math.max(r.since, now - 60 * 24 * HOUR) : now - this.cfg.learn_days * 24 * HOUR;
+        const parts = r ? r.parts : PARTS;
+        const key = `${start}|${parts.join(",")}`;
+        if (!groups.has(key)) groups.set(key, { start, parts, zones: [] });
+        groups.get(key).zones.push(z);
+      }
+      for (const g of groups.values()) {
+        const n = await seedFromHistory(this, g.zones, { start: g.start, end: now, toutEntity: this.toutEntity, parts: g.parts });
+        for (const z of g.zones) { this.seeded[z.id] = true; delete this.reseed[z.id]; }
+        log.info(`climate: learned ${g.parts.join(", ")} from history since ${new Date(g.start).toISOString()} for ${g.zones.map((z) => z.id).join(", ")} (${n} states)`);
+      }
     } catch (e) { log.warn("climate: could not read history to learn from", e.message); }
     finally { this.seeding = false; }
+  }
+
+  // ---------------------------------------------------------------- reset
+  /** Forget what was learned, for one zone or all, and some or all parts:
+        prefs  setpoint preferences (and any override being held)
+        occ    the occupancy pattern (and pre-conditioning latches)
+        model  the thermal model: back to the floor-area prior
+        curves the metered consumption curves and meter baselines
+      Zone settings, and the actuator's dwell state and command memory (which
+      describe the hardware, not the house's habits), are kept. History isn't
+      re-learned unless `reseedSince` (ms) asks for it: after a move, the recorder's
+      history is the old life. Returns { zones, parts }. */
+  reset({ zone = null, parts = PARTS, reseedSince = null, now = Date.now() } = {}) {
+    const ps = (parts === "all" || !parts ? PARTS : parts).filter((p) => PARTS.includes(p));
+    if (!ps.length) throw new Error(`nothing to reset: parts must be some of ${PARTS.join(", ")}`);
+    const zones = this.cfg.zones.filter((z) => !zone || z.id === zone);
+    if (zone && !zones.length) throw new Error(`no climate zone "${zone}"`);
+    for (const z of zones) {
+      if (ps.includes("prefs")) { this.prefs.forget(z.id); delete this.overrides[z.id]; }
+      if (ps.includes("occ")) { this.occ.forget(z.id); delete this.latch[z.id]; this.suppress.delete(z.id); }
+      if (ps.includes("model")) { delete this.modelState[z.id]; this.models.set(z.id, new ThermalModel({ area_m2: z.area_m2 })); this.live.acc.delete(z.id); this.live.lag.delete(z.id); }
+      if (ps.includes("curves")) {
+        this.curves.retain(Object.keys(this.curves.c).map((k) => k.split("|")[0]).filter((e) => !z.outputs.some((o) => o.entity === e)));
+        for (const o of z.outputs) for (const m of [o.power_entity, o.source_power_entity]) if (m) delete this.baselines[m];
+      }
+      const since = (this.since[z.id] = { ...(this.since[z.id] || {}) });
+      for (const p of ps) since[p] = now;
+      // Not re-learned from history unless asked: the history is from before.
+      this.seeded[z.id] = !Number.isFinite(reseedSince);
+      if (Number.isFinite(reseedSince)) this.reseed[z.id] = { since: reseedSince, parts: ps };
+      else delete this.reseed[z.id];
+    }
+    log.info(`climate: reset ${ps.join(", ")} for ${zones.map((z) => z.id).join(", ") || "no zones"}${Number.isFinite(reseedSince) ? `; re-learning from history since ${new Date(reseedSince).toISOString()}` : "; not re-learning from history"}`);
+    return { zones: zones.map((z) => z.id), parts: ps };
+  }
+
+  /** When a zone's learning started: per part, and overall (the newest part). */
+  learningSince(zoneId) {
+    const s = this.since[zoneId] || {};
+    const times = PARTS.map((p) => s[p]).filter(Number.isFinite);
+    return { ...s, all: times.length ? Math.max(...times) : null };
   }
 
   // ---------------------------------------------------------------- output
@@ -552,6 +617,7 @@ class ClimateBrain {
           flags: this.flags.get(z.id) || [],
           override: this.overrides[z.id] || null,
           preconditionUntil: this.latch[z.id] || null,
+          learningSince: this.learningSince(z.id),
           seeded: !!this.seeded[z.id],
         };
       }),
@@ -562,8 +628,8 @@ class ClimateBrain {
     const models = { ...this.modelState };
     for (const [id, m] of this.models) models[id] = m.toJSON();
     return { version: STATE_VERSION, prefs: this.prefs.toJSON(), occ: this.occ.toJSON(), curves: this.curves.toJSON(), models,
-             seeded: this.seeded, overrides: this.overrides, latch: this.latch, baselines: this.baselines, actuator: this.actuator.toJSON() };
+             seeded: this.seeded, since: this.since, reseed: this.reseed, overrides: this.overrides, latch: this.latch, baselines: this.baselines, actuator: this.actuator.toJSON() };
   }
 }
 
-module.exports = { ClimateBrain, newCtx, sameAsCommanded, STATE_VERSION };
+module.exports = { ClimateBrain, newCtx, sameAsCommanded, STATE_VERSION, PARTS };

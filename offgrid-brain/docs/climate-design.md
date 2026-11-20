@@ -224,6 +224,28 @@ parts are dropped, a newer version starts fresh), an unparseable file is renamed
 `.corrupt`; `configure`/`seed` and every tick step are wrapped in main.js so climate
 can't stop load shedding.
 
+## Reset and moving in (0.34.1)
+
+`ClimateBrain.reset({ zone?, parts?, reseedSince? })` forgets, per zone, any of
+`prefs` (and a held override), `occ` (and pre-conditioning latches), `model` (a fresh
+`ThermalModel` on the floor-area prior; `forPlanning` keeps using the prior until the
+new fit passes the gate) and `curves` (plus the meters' baselines). It keeps zone
+settings and the actuator's `obs` (dwell) and `commanded`: they describe the hardware.
+Each part's reset time is kept in `since` (persisted); "learning since" is the newest.
+
+No automatic re-seed: after a move the recorder's history is the old household. A
+reset with `reseedSince` sets `reseed[zone] = { since, parts }` and clears `seeded`, so
+the next `seed()` replays history from that date with a learning context limited to
+those parts (`newCtx(parts)`; `_observe` skips the other learners).
+
+Entry points: `POST /api/climate/reset` (needs `confirm: "RESET"`), the Settings card,
+and MQTT buttons (`offgrid_brain/cmd/climate_reset_learning`,
+`offgrid_brain/cmd/climate_<zone>_reset_learning`, payload `PRESS`; the sink subscribes
+to `offgrid_brain/cmd/#`). State is saved immediately after a reset.
+
+**Moving in:** dry run until the house is lived in; reset everything on move-in day;
+optionally, a week or two later, reset again with re-seed since move-in day.
+
 ## Future split: the energy-budget contract
 
 If climate becomes its own add-on, the only contract needed:
